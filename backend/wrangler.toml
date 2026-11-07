@@ -1,0 +1,36 @@
+name = "cloudharbor-backend"
+main = "unified-entry.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 開發伺服器配置
+[dev]
+port = 8787
+local_protocol = "http"
+
+# 環境變數
+[vars]
+# 用於加密敏感配置的金鑰
+ENCRYPTION_SECRET = "default-encryption-key"
+# 管理員Token過期天數，預設7天
+ADMIN_TOKEN_EXPIRY_DAYS = "7"
+# 除錯開關（預設 false，不區分大小寫）
+# - DEBUG_DRIVER_CACHE=true：開啟驅動快取命中日誌
+# DEBUG_DRIVER_CACHE = "false"
+
+# 繫結D1資料庫
+# 需要替換為實際的資料庫ID
+[[d1_databases]]
+binding = "DB"
+database_name = "cloudharbor-db"
+database_id = "xxxxxxxxxxxxxxxxx"
+
+# Cloudflare Workflows 繫結
+# 用於非同步任務作業的持久化執行
+[[workflows]]
+binding = "JOB_WORKFLOW"
+name = "job-workflow"
+class_name = "JobWorkflow"
+
+[triggers]
+crons = ["*/5 * * * *"]

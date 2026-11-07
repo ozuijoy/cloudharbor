@@ -1,0 +1,126 @@
+name: Build and Push all Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "自定義版本標籤(不包含v字首)"
+        required: false
+        default: ""
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set-version.outputs.version }}
+    steps:
+      - name: 檢出程式碼
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 設定版本
+        id: set-version
+        run: |
+          # 1. 首先檢查是否有手動指定的版本
+          if [[ "${{ github.event.inputs.version }}" != "" ]]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # 2. 使用短提交雜湊作為版本（因為沒有標籤推送觸發）
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "version=dev-${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+  build-backend:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: 檢出程式碼
+        uses: actions/checkout@v4
+
+      - name: 設定QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: 設定Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登入到Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 構建並推送後端映象
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/backend/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/cloudharbor-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/cloudharbor-backend:${{ needs.setup.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  build-frontend:
+    needs: setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: 檢出程式碼
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: 設定QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: 設定Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登入到Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 先做一次 amd64 本地 build + 自檢
+      - name: 構建前端映象（amd64）用於靜態資源自檢
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/frontend/Dockerfile
+          load: true
+          tags: cloudharbor-frontend:ci-check
+          platforms: linux/amd64
+          cache-from: type=gha
+
+      - name: 校驗映象內靜態資源（vditor / libarchive.js）
+        run: |
+          set -e
+          VDITOR_VERSION=$(node -e "const fs=require('fs'); const t=fs.readFileSync('frontend/src/utils/vditorLoader.js','utf8'); const m=t.match(/export\\s+const\\s+VDITOR_VERSION\\s*=\\s*\\\"([^\\\"]+)\\\"/); if(!m){console.error('VDITOR_VERSION not found'); process.exit(1);} process.stdout.write(m[1]);")
+          echo "VDITOR_VERSION=${VDITOR_VERSION}"
+          docker run --rm cloudharbor-frontend:ci-check sh -c "test -f /usr/share/nginx/html/assets/vditor/${VDITOR_VERSION}/dist/index.min.js"
+          docker run --rm cloudharbor-frontend:ci-check sh -c "test -f /usr/share/nginx/html/assets/vditor/${VDITOR_VERSION}/dist/index.css"
+          docker run --rm cloudharbor-frontend:ci-check sh -c 'test -f /usr/share/nginx/html/libarchive.js/dist/worker-bundle.js'
+          echo "✅ 靜態資源校驗透過：vditor + libarchive.js"
+
+      - name: 構建並推送前端映象
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/cloudharbor-frontend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/cloudharbor-frontend:${{ needs.setup.outputs.version }}
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}

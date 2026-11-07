@@ -1,0 +1,355 @@
+name: 🎛️ 部署控制面板[⭐Click ME] / Deployment Control Panel
+
+on:
+  workflow_dispatch:
+    inputs:
+      spa_deploy:
+        description: '🔄 SPA一體化自動部署 / SPA unified auto deploy'
+        required: true
+        type: choice
+        options:
+          - '🟢 開啟'
+          - '🔴 關閉'
+          - '📊 檢視當前狀態'
+        default: '📊 檢視當前狀態'
+
+      backend_deploy:
+        description: '⚙️ 後端分離自動部署 / Backend-only auto deploy'
+        required: true
+        type: choice
+        options:
+          - '🟢 開啟'
+          - '🔴 關閉'
+          - '📊 檢視當前狀態'
+        default: '📊 檢視當前狀態'
+
+      frontend_deploy:
+        description: '🎨 前端分離自動部署 / Frontend-only auto deploy'
+        required: true
+        type: choice
+        options:
+          - '🟢 開啟'
+          - '🔴 關閉'
+          - '📊 檢視當前狀態'
+        default: '📊 檢視當前狀態'
+
+jobs:
+  control-deployments:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: 📥 檢出程式碼
+        uses: actions/checkout@v4
+
+      - name: 📋 讀取當前配置狀態
+        id: read_config
+        run: |
+          SPA_STATUS="${{ vars.SPA_DEPLOY }}"
+          BACKEND_STATUS="${{ vars.BACKEND_DEPLOY }}"
+          FRONTEND_STATUS="${{ vars.FRONTEND_DEPLOY }}"
+          LAST_UPDATED="${{ vars.DEPLOY_LAST_UPDATED }}"
+          UPDATED_BY="${{ vars.DEPLOY_UPDATED_BY }}"
+
+          # 變數未設定時使用預設值
+          [ -z "$SPA_STATUS" ] && SPA_STATUS="false"
+          [ -z "$BACKEND_STATUS" ] && BACKEND_STATUS="false"
+          [ -z "$FRONTEND_STATUS" ] && FRONTEND_STATUS="false"
+          [ -z "$LAST_UPDATED" ] && LAST_UPDATED="N/A"
+          [ -z "$UPDATED_BY" ] && UPDATED_BY="N/A"
+
+          echo "spa_status=$SPA_STATUS" >> $GITHUB_OUTPUT
+          echo "backend_status=$BACKEND_STATUS" >> $GITHUB_OUTPUT
+          echo "frontend_status=$FRONTEND_STATUS" >> $GITHUB_OUTPUT
+          echo "last_updated=$LAST_UPDATED" >> $GITHUB_OUTPUT
+          echo "updated_by=$UPDATED_BY" >> $GITHUB_OUTPUT
+
+          echo "======================================"
+          echo "📊 當前自動部署狀態"
+          echo "📊 Current auto deployment status"
+          echo "======================================"
+          echo ""
+          echo "🔄 SPA一體化部署 / SPA unified: $([ "$SPA_STATUS" = "true" ] && echo '🟢 已開啟 / ON' || echo '🔴 已關閉 / OFF')"
+          echo "⚙️ 後端分離部署 / Backend only: $([ "$BACKEND_STATUS" = "true" ] && echo '🟢 已開啟 / ON' || echo '🔴 已關閉 / OFF')"
+          echo "🎨 前端分離部署 / Frontend only: $([ "$FRONTEND_STATUS" = "true" ] && echo '🟢 已開啟 / ON' || echo '🔴 已關閉 / OFF')"
+          echo ""
+          echo "📅 最後更新 / Last updated: $LAST_UPDATED"
+          echo "👤 更新者 / Updated by: $UPDATED_BY"
+          echo ""
+          echo "======================================"
+
+      - name: 🔄 更新 SPA 一體化部署配置
+        if: github.event.inputs.spa_deploy != '📊 檢視當前狀態'
+        run: |
+          ACTOR="${{ github.actor }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          if [[ "${{ github.event.inputs.spa_deploy }}" == "🟢 開啟" ]]; then
+            echo "✅ 正在開啟 SPA 一體化自動部署 / Enabling SPA unified auto deploy..."
+            NEW_VALUE="true"
+            echo "🎉 SPA 一體化自動部署已開啟 / SPA unified auto deploy is ON!"
+          else
+            echo "⏸️ 正在關閉 SPA 一體化自動部署 / Disabling SPA unified auto deploy..."
+            NEW_VALUE="false"
+            echo "✅ SPA 一體化自動部署已關閉 / SPA unified auto deploy is OFF!"
+          fi
+
+          OWNER="${GITHUB_REPOSITORY%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+
+          # 更新倉庫級 Actions 變數（不存在時自動建立）
+          for VAR_NAME in SPA_DEPLOY DEPLOY_LAST_UPDATED DEPLOY_UPDATED_BY; do
+            case "$VAR_NAME" in
+              SPA_DEPLOY)
+                VAR_VALUE="$NEW_VALUE"
+                ;;
+              DEPLOY_LAST_UPDATED)
+                VAR_VALUE="$TIMESTAMP"
+                ;;
+              DEPLOY_UPDATED_BY)
+                VAR_VALUE="$ACTOR"
+                ;;
+            esac
+
+            HTTP_CODE=$(curl -sS -o /tmp/var_resp.json -w "%{http_code}" \
+              -X PATCH \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.ACTIONS_VAR_TOKEN }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$OWNER/$REPO/actions/variables/$VAR_NAME" \
+              -d "{\"name\":\"$VAR_NAME\",\"value\":\"$VAR_VALUE\"}")
+
+            if [ "$HTTP_CODE" = "404" ]; then
+              HTTP_CODE=$(curl -sS -o /tmp/var_resp.json -w "%{http_code}" \
+                -X POST \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${{ secrets.ACTIONS_VAR_TOKEN }}" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/$OWNER/$REPO/actions/variables" \
+                -d "{\"name\":\"$VAR_NAME\",\"value\":\"$VAR_VALUE\"}")
+            fi
+
+            if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+              echo "❌ 更新變數 $VAR_NAME 失敗，HTTP 狀態碼: $HTTP_CODE"
+              cat /tmp/var_resp.json || true
+              exit 1
+            fi
+          done
+
+          # 觸發 SPA 一體化部署工作流（根據當前開關狀態由目標工作流自行決定是否執行）
+          DISPATCH_CODE=$(curl -sS -o /tmp/spa_dispatch.json -w "%{http_code}" \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.ACTIONS_VAR_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$OWNER/$REPO/actions/workflows/deploy-spa-cloudflare.yml/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"from_panel\":\"true\"}}")
+
+          if [ "$DISPATCH_CODE" -ge 200 ] && [ "$DISPATCH_CODE" -lt 300 ]; then
+            echo "🚀 已觸發 SPA 一體化部署工作流（將按當前 SPA_DEPLOY 開關決定是否真正部署）"
+          else
+            echo "⚠️ 觸發 SPA 一體化部署工作流失敗，HTTP 狀態碼: $DISPATCH_CODE"
+            cat /tmp/spa_dispatch.json || true
+          fi
+
+      - name: ⚙️ 更新後端分離部署配置
+        if: github.event.inputs.backend_deploy != '📊 檢視當前狀態'
+        run: |
+          ACTOR="${{ github.actor }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          if [[ "${{ github.event.inputs.backend_deploy }}" == "🟢 開啟" ]]; then
+            echo "✅ 正在開啟後端分離自動部署 / Enabling backend-only auto deploy..."
+            NEW_VALUE="true"
+            echo "🎉 後端分離自動部署已開啟 / Backend-only auto deploy is ON!"
+          else
+            echo "⏸️ 正在關閉後端分離自動部署 / Disabling backend-only auto deploy..."
+            NEW_VALUE="false"
+            echo "✅ 後端分離自動部署已關閉 / Backend-only auto deploy is OFF!"
+          fi
+
+          OWNER="${GITHUB_REPOSITORY%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+
+          for VAR_NAME in BACKEND_DEPLOY DEPLOY_LAST_UPDATED DEPLOY_UPDATED_BY; do
+            case "$VAR_NAME" in
+              BACKEND_DEPLOY)
+                VAR_VALUE="$NEW_VALUE"
+                ;;
+              DEPLOY_LAST_UPDATED)
+                VAR_VALUE="$TIMESTAMP"
+                ;;
+              DEPLOY_UPDATED_BY)
+                VAR_VALUE="$ACTOR"
+                ;;
+            esac
+
+            HTTP_CODE=$(curl -sS -o /tmp/var_resp.json -w "%{http_code}" \
+              -X PATCH \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.ACTIONS_VAR_TOKEN }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$OWNER/$REPO/actions/variables/$VAR_NAME" \
+              -d "{\"name\":\"$VAR_NAME\",\"value\":\"$VAR_VALUE\"}")
+
+            if [ "$HTTP_CODE" = "404" ]; then
+              HTTP_CODE=$(curl -sS -o /tmp/var_resp.json -w "%{http_code}" \
+                -X POST \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${{ secrets.ACTIONS_VAR_TOKEN }}" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/$OWNER/$REPO/actions/variables" \
+                -d "{\"name\":\"$VAR_NAME\",\"value\":\"$VAR_VALUE\"}")
+            fi
+
+            if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+              echo "❌ 更新變數 $VAR_NAME 失敗，HTTP 狀態碼: $HTTP_CODE"
+              cat /tmp/var_resp.json || true
+              exit 1
+            fi
+          done
+
+          # 觸發後端分離部署工作流（根據當前開關狀態由目標工作流自行決定是否執行）
+          DISPATCH_CODE=$(curl -sS -o /tmp/backend_dispatch.json -w "%{http_code}" \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.ACTIONS_VAR_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$OWNER/$REPO/actions/workflows/deploy-backend-cloudflare.yml/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"from_panel\":\"true\"}}")
+
+          if [ "$DISPATCH_CODE" -ge 200 ] && [ "$DISPATCH_CODE" -lt 300 ]; then
+            echo "🚀 已觸發後端分離部署工作流（將按當前 BACKEND_DEPLOY 開關決定是否真正部署）"
+          else
+            echo "⚠️ 觸發後端分離部署工作流失敗，HTTP 狀態碼: $DISPATCH_CODE"
+            cat /tmp/backend_dispatch.json || true
+          fi
+
+      - name: 🎨 更新前端分離部署配置
+        if: github.event.inputs.frontend_deploy != '📊 檢視當前狀態'
+        run: |
+          ACTOR="${{ github.actor }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          if [[ "${{ github.event.inputs.frontend_deploy }}" == "🟢 開啟" ]]; then
+            echo "✅ 正在開啟前端分離自動部署 / Enabling frontend-only auto deploy..."
+            NEW_VALUE="true"
+            echo "🎉 前端分離自動部署已開啟 / Frontend-only auto deploy is ON!"
+          else
+            echo "⏸️ 正在關閉前端分離自動部署 / Disabling frontend-only auto deploy..."
+            NEW_VALUE="false"
+            echo "✅ 前端分離自動部署已關閉 / Frontend-only auto deploy is OFF!"
+          fi
+
+          OWNER="${GITHUB_REPOSITORY%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+
+          for VAR_NAME in FRONTEND_DEPLOY DEPLOY_LAST_UPDATED DEPLOY_UPDATED_BY; do
+            case "$VAR_NAME" in
+              FRONTEND_DEPLOY)
+                VAR_VALUE="$NEW_VALUE"
+                ;;
+              DEPLOY_LAST_UPDATED)
+                VAR_VALUE="$TIMESTAMP"
+                ;;
+              DEPLOY_UPDATED_BY)
+                VAR_VALUE="$ACTOR"
+                ;;
+            esac
+
+            HTTP_CODE=$(curl -sS -o /tmp/var_resp.json -w "%{http_code}" \
+              -X PATCH \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.ACTIONS_VAR_TOKEN }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$OWNER/$REPO/actions/variables/$VAR_NAME" \
+              -d "{\"name\":\"$VAR_NAME\",\"value\":\"$VAR_VALUE\"}")
+
+            if [ "$HTTP_CODE" = "404" ]; then
+              HTTP_CODE=$(curl -sS -o /tmp/var_resp.json -w "%{http_code}" \
+                -X POST \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${{ secrets.ACTIONS_VAR_TOKEN }}" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/$OWNER/$REPO/actions/variables" \
+                -d "{\"name\":\"$VAR_NAME\",\"value\":\"$VAR_VALUE\"}")
+            fi
+
+            if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+              echo "❌ 更新變數 $VAR_NAME 失敗，HTTP 狀態碼: $HTTP_CODE"
+              cat /tmp/var_resp.json || true
+              exit 1
+            fi
+          done
+
+          # 觸發前端分離部署工作流（根據當前開關狀態由目標工作流自行決定是否執行）
+          DISPATCH_CODE=$(curl -sS -o /tmp/frontend_dispatch.json -w "%{http_code}" \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.ACTIONS_VAR_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$OWNER/$REPO/actions/workflows/deploy-frontend-cloudflare.yml/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"from_panel\":\"true\"}}")
+
+          if [ "$DISPATCH_CODE" -ge 200 ] && [ "$DISPATCH_CODE" -lt 300 ]; then
+            echo "🚀 已觸發前端分離部署工作流（將按當前 FRONTEND_DEPLOY 開關決定是否真正部署）"
+          else
+            echo "⚠️ 觸發前端分離部署工作流失敗，HTTP 狀態碼: $DISPATCH_CODE"
+            cat /tmp/frontend_dispatch.json || true
+          fi
+
+      - name: 📊 顯示更新後的狀態
+        run: |
+          OWNER="${GITHUB_REPOSITORY%/*}"
+          REPO="${GITHUB_REPOSITORY#*/}"
+
+          fetch_var() {
+            local name="$1"
+            curl -sS \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ secrets.ACTIONS_VAR_TOKEN }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$OWNER/$REPO/actions/variables/$name" \
+              | jq -r '.value // empty'
+          }
+
+          NEW_SPA_STATUS=$(fetch_var "SPA_DEPLOY")
+          NEW_BACKEND_STATUS=$(fetch_var "BACKEND_DEPLOY")
+          NEW_FRONTEND_STATUS=$(fetch_var "FRONTEND_DEPLOY")
+          LAST_UPDATED=$(fetch_var "DEPLOY_LAST_UPDATED")
+          UPDATED_BY=$(fetch_var "DEPLOY_UPDATED_BY")
+
+          [ -z "$NEW_SPA_STATUS" ] && NEW_SPA_STATUS="false"
+          [ -z "$NEW_BACKEND_STATUS" ] && NEW_BACKEND_STATUS="false"
+          [ -z "$NEW_FRONTEND_STATUS" ] && NEW_FRONTEND_STATUS="false"
+          [ -z "$LAST_UPDATED" ] && LAST_UPDATED="N/A"
+          [ -z "$UPDATED_BY" ] && UPDATED_BY="N/A"
+
+          echo ""
+          echo "======================================"
+          echo "✅ 配置更新完成 / Config update completed"
+          echo "======================================"
+          echo ""
+          echo "🔄 SPA一體化部署 / SPA unified: $([ "$NEW_SPA_STATUS" = "true" ] && echo '🟢 已開啟 / ON' || echo '🔴 已關閉 / OFF')"
+          echo "⚙️ 後端分離部署 / Backend only: $([ "$NEW_BACKEND_STATUS" = "true" ] && echo '🟢 已開啟 / ON' || echo '🔴 已關閉 / OFF')"
+          echo "🎨 前端分離部署 / Frontend only: $([ "$NEW_FRONTEND_STATUS" = "true" ] && echo '🟢 已開啟 / ON' || echo '🔴 已關閉 / OFF')"
+          echo ""
+          echo "📅 最後更新 / Last updated: $LAST_UPDATED"
+          echo "👤 更新者 / Updated by: $UPDATED_BY"
+          echo ""
+          echo "======================================"
+
+          # 檢測多重部署警告
+          ENABLED_COUNT=0
+          [ "$NEW_SPA_STATUS" = "true" ] && ((ENABLED_COUNT++)) || true
+          [ "$NEW_BACKEND_STATUS" = "true" ] && ((ENABLED_COUNT++)) || true
+          [ "$NEW_FRONTEND_STATUS" = "true" ] && ((ENABLED_COUNT++)) || true
+
+          if [ $ENABLED_COUNT -gt 1 ]; then
+            echo ""
+            echo "⚠️ 警告：檢測到多個部署方式同時啟用！ / Warning: multiple deployment modes are enabled at the same time!"
+            echo "建議只啟用一種部署方式以避免重複部署。 / It is recommended to enable only one mode to avoid duplicate deployments."
+            echo ""
+          fi

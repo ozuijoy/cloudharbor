@@ -1,0 +1,115 @@
+import { ApiStatus } from "../../constants/index.js";
+import { AppError, NotFoundError, AuthorizationError, ValidationError } from "../../http/errors.js";
+import { jsonOk } from "../../utils/common.js";
+import { guardShareFile, getFileBySlug, getPublicFileInfo } from "../../services/fileService.js";
+import { verifyPassword } from "../../utils/crypto.js";
+import { useRepositories } from "../../utils/repositories.js";
+import { getEncryptionSecret } from "../../utils/environmentUtils.js";
+import { LinkService } from "../../storage/link/LinkService.js";
+
+export const registerFilesPublicRoutes = (router) => {
+  const getShareFileInfoHandler = async (c) => {
+    const db = c.env.DB;
+    const { slug } = c.req.param();
+    const encryptionSecret = getEncryptionSecret(c);
+    const requestUrl = new URL(c.req.url);
+
+    const file = await getFileBySlug(db, slug);
+    const requiresPassword = !!file.password;
+
+    if (!requiresPassword) {
+      const { file: guardedFile, isExpired } = await guardShareFile(db, slug, encryptionSecret, { incrementViews: true });
+
+      if (isExpired) {
+        const repositoryFactory = useRepositories(c);
+        const fileRepository = repositoryFactory.getFileRepository();
+        const fileStillExists = await fileRepository.findById(guardedFile.id).catch(() => null);
+        if (fileStillExists) {
+          console.log(`檔案(${guardedFile.id})達到最大訪問次數但未被刪除，再次嘗試刪除...`);
+          const { checkAndDeleteExpiredFile } = await import("../../services/fileViewService.js");
+          await checkAndDeleteExpiredFile(db, guardedFile, encryptionSecret, repositoryFactory);
+        }
+        throw new AppError("檔案已達到最大檢視次數", { status: ApiStatus.GONE, code: "GONE", expose: true });
+      }
+
+      const repositoryFactory = useRepositories(c);
+      const linkService = new LinkService(db, encryptionSecret, repositoryFactory);
+      const link = await linkService.getShareExternalLink(guardedFile, null);
+      const publicInfo = await getPublicFileInfo(db, guardedFile, requiresPassword, link, encryptionSecret, {
+        baseOrigin: requestUrl.origin,
+      });
+
+      return jsonOk(c, publicInfo, "獲取檔案成功");
+    }
+
+    const repositoryFactory = useRepositories(c);
+    const linkService = new LinkService(db, encryptionSecret, repositoryFactory);
+    const link = await linkService.getShareExternalLink(file, null);
+    const publicInfo = await getPublicFileInfo(db, file, true, link, encryptionSecret, {
+      baseOrigin: requestUrl.origin,
+    });
+    return jsonOk(c, publicInfo, "獲取檔案成功");
+  };
+
+  const verifyShareFilePasswordHandler = async (c) => {
+    const db = c.env.DB;
+    const { slug } = c.req.param();
+    const body = await c.req.json();
+    const encryptionSecret = getEncryptionSecret(c);
+    const requestUrl = new URL(c.req.url);
+
+    if (!body.password) {
+      throw new ValidationError("密碼是必需的");
+    }
+
+    const file = await getFileBySlug(db, slug);
+    if (!file.password) {
+      const repositoryFactory = useRepositories(c);
+      const linkService = new LinkService(db, encryptionSecret, repositoryFactory);
+      const link = await linkService.getShareExternalLink(file, null);
+      const publicInfo = await getPublicFileInfo(db, file, false, link, encryptionSecret, {
+        baseOrigin: requestUrl.origin,
+      });
+      return jsonOk(c, publicInfo, "此檔案不需要密碼");
+    }
+
+    const passwordValid = await verifyPassword(body.password, file.password);
+    if (!passwordValid) {
+      throw new AuthorizationError("密碼不正確");
+    }
+
+    const { file: guardedFile, isExpired } = await guardShareFile(db, slug, encryptionSecret, { incrementViews: true });
+
+    if (isExpired) {
+      throw new AppError("檔案已達到最大檢視次數", { status: ApiStatus.GONE, code: "GONE", expose: true });
+    }
+
+    const repositoryFactory = useRepositories(c);
+    const linkService = new LinkService(db, encryptionSecret, repositoryFactory);
+    const link = await linkService.getShareExternalLink(guardedFile, null);
+    let fileWithPassword = guardedFile;
+
+    if (fileWithPassword.password) {
+      const fileRepository = repositoryFactory.getFileRepository();
+      const passwordInfo = await fileRepository.getFilePassword(guardedFile.id);
+      if (passwordInfo && passwordInfo.plain_password) {
+        fileWithPassword = {
+          ...fileWithPassword,
+          plain_password: passwordInfo.plain_password,
+        };
+      }
+    }
+
+    const publicInfo = await getPublicFileInfo(db, fileWithPassword, false, link, encryptionSecret, {
+      baseOrigin: requestUrl.origin,
+    });
+
+    return jsonOk(c, publicInfo, "密碼驗證成功");
+  };
+
+  // Share 控制面（JSON）
+  router.get("/api/share/get/:slug", getShareFileInfoHandler);
+
+  // Share 密碼驗證
+  router.post("/api/share/verify/:slug", verifyShareFilePasswordHandler);
+};

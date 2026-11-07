@@ -1,0 +1,245 @@
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import adminRoutes from "./routes/adminRoutes.js";
+import adminFsIndexRoutes from "./routes/adminFsIndexRoutes.js";
+import apiKeyRoutes from "./routes/apiKeyRoutes.js";
+import { backupRoutes } from "./routes/backupRoutes.js";
+
+import storageConfigRoutes from "./routes/storageConfigRoutes.js";
+import systemRoutes from "./routes/systemRoutes.js";
+import mountRoutes from "./routes/mountRoutes.js";
+import webdavRoutes from "./routes/webdavRoutes.js";
+import fsRoutes from "./routes/fsRoutes.js";
+import fsMetaRoutes from "./routes/fsMetaRoutes.js";
+import { DbTables, ApiStatus, UserType } from "./constants/index.js";
+import { createErrorResponse, jsonOk } from "./utils/common.js";
+import filesRoutes from "./routes/filesRoutes.js";
+import shareUploadRoutes from "./routes/shareUploadRoutes.js";
+import pastesRoutes from "./routes/pastesRoutes.js";
+import fileViewRoutes from "./routes/fileViewRoutes.js";
+import { fsProxyRoutes } from "./routes/fsProxyRoutes.js";
+import { proxyLinkRoutes } from "./routes/proxyLinkRoutes.js";
+import scheduledRoutes from "./routes/scheduledRoutes.js";
+import { securityContext } from "./security/middleware/securityContext.js";
+import { withRepositories } from "./utils/repositories.js";
+import { errorBoundary } from "./http/middlewares/errorBoundary.js";
+import { normalizeError, sanitizeErrorMessageForClient } from "./http/errors.js";
+
+const getTimeSource = () => {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return () => performance.now();
+  }
+  return () => Date.now();
+};
+
+const now = getTimeSource();
+
+const generateRequestId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const getAuthSnapshot = (c) => {
+  const authResult = c.get("authResult");
+  if (!authResult) {
+    return { userType: UserType.ANONYMOUS, userId: null };
+  }
+  if (authResult.isAdmin && authResult.isAdmin()) {
+    return { userType: UserType.ADMIN, userId: authResult.getUserId?.() || null };
+  }
+  if (authResult.keyInfo) {
+    return { userType: UserType.API_KEY, userId: authResult.keyInfo.id || authResult.keyInfo.name || null };
+  }
+  return { userType: UserType.ANONYMOUS, userId: authResult.getUserId?.() || null };
+};
+
+const structuredLogger = async (c, next) => {
+  const existingReqId = c.get("reqId");
+  const reqId = existingReqId ?? generateRequestId();
+  if (!existingReqId) {
+    c.set("reqId", reqId);
+  }
+
+  const started = now();
+  let caughtError = null;
+  try {
+    await next();
+  } catch (error) {
+    caughtError = error;
+    throw error;
+  } finally {
+    const handledError = c.get("handledError");
+    const durationMs = Number((now() - started).toFixed(2));
+    const slow = durationMs >= 1000; // 簡單慢請求標記（>=1s）
+    const { userType, userId } = getAuthSnapshot(c);
+    const status = handledError?.status ?? caughtError?.status ?? c.res?.status ?? 200;
+    const logPayload = {
+      type: "request",
+      reqId,
+      method: c.req.method,
+      path: c.req.path,
+      status,
+      durationMs,
+      slow,
+      userType,
+      userId,
+    };
+
+    const errorForLog = handledError?.originalError ?? caughtError;
+    if (errorForLog) {
+      logPayload.error = {
+        name: errorForLog.name,
+        message: handledError?.publicMessage ?? errorForLog.message,
+      };
+    }
+
+    console.log(JSON.stringify(logPayload));
+  }
+};
+
+// 建立一個Hono應用例項
+const app = new Hono();
+
+// 註冊中介軟體
+app.use("*", structuredLogger);
+// 匯入WebDAV配置
+import { WEBDAV_BASE_PATH } from "./webdav/auth/config/WebDAVConfig.js";
+
+// 統一CORS中介軟體
+app.use("*", async (c, next) => {
+  const isWebDAVPath = c.req.path === WEBDAV_BASE_PATH || c.req.path.startsWith(WEBDAV_BASE_PATH + "/");
+  const isRootPath = c.req.path === "/";
+
+  if (c.req.method === "OPTIONS" && (isWebDAVPath || isRootPath)) {
+    // WebDAV OPTIONS請求和根路徑OPTIONS請求跳過CORS自動處理
+    console.log("WebDAV OPTIONS請求:", c.req.method, c.req.path);
+    await next();
+    return;
+  } else {
+    // 其他請求使用標準CORS處理
+    const corsMiddleware = cors({
+      origin: (origin) => {
+        return origin || "*";
+      },
+      allowHeaders: [
+        "Content-Type",
+        "Authorization",
+        "Range",
+        "X-API-KEY",
+        "X-FS-Path-Token",
+        "X-FS-Path-Tokens",
+        "X-Custom-Auth-Key",
+        "Depth",
+        "Destination",
+        "Overwrite",
+        "If-Match",
+        "If-None-Match",
+        "If-Modified-Since",
+        "If-Unmodified-Since",
+        "Lock-Token",
+        "Content-Range",
+        "Content-Length",
+        "X-Requested-With",
+        // FS / Share 流式上傳自定義頭
+        "X-FS-Filename",
+        "X-FS-Options",
+        "X-Share-Filename",
+        "X-Share-Options",
+      ],
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK", "HEAD"],
+      exposeHeaders: ["ETag", "Content-Length", "Content-Disposition", "Content-Range", "Accept-Ranges", "X-Request-Id"],
+      maxAge: 86400,
+      credentials: true,
+    });
+
+    return await corsMiddleware(c, next);
+  }
+});
+
+app.use("*", errorBoundary());
+app.use("*", withRepositories());
+app.use("*", securityContext());
+
+// 根路徑WebDAV OPTIONS相容性處理器
+// 為1Panel等客戶端提供WebDAV能力發現支援
+// 必須在其他路由註冊之前，確保優先匹配
+app.options("/", (c) => {
+  // 返回標準WebDAV能力宣告，與/dav路徑保持一致
+  const headers = {
+    Allow: "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, LOCK, UNLOCK, PROPPATCH",
+    DAV: "1, 2",
+    "MS-Author-Via": "DAV",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "OPTIONS, PROPFIND, GET, HEAD, PUT, DELETE, MKCOL, COPY, MOVE, LOCK, UNLOCK, PROPPATCH",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Depth, Destination, If, Lock-Token, Overwrite, X-Custom-Auth-Key",
+    "Access-Control-Expose-Headers": "DAV, Lock-Token, MS-Author-Via",
+    "Access-Control-Max-Age": "86400",
+  };
+
+  console.log("根路徑WebDAV OPTIONS請求 - 客戶端相容性支援");
+  return new Response("", { status: 200, headers });
+});
+
+// 註冊路由
+app.route("/", adminRoutes);
+app.route("/", adminFsIndexRoutes);
+app.route("/", apiKeyRoutes);
+app.route("/", backupRoutes);
+app.route("/", fileViewRoutes);
+app.route("/", filesRoutes);
+app.route("/", shareUploadRoutes);
+app.route("/", pastesRoutes);
+app.route("/", storageConfigRoutes);
+app.route("/", systemRoutes);
+app.route("/", mountRoutes);
+app.route("/", webdavRoutes);
+app.route("/", fsRoutes);
+app.route("/", fsMetaRoutes);
+app.route("/", fsProxyRoutes);
+app.route("/", proxyLinkRoutes);
+app.route("/", scheduledRoutes);
+
+// 健康檢查路由
+app.get("/api/health", (c) => {
+  return jsonOk(c, { status: "ok", timestamp: new Date().toISOString() });
+});
+
+// 全域性錯誤處理
+app.onError((err, c) => {
+  const normalized = normalizeError(err, {
+    method: c.req.method,
+    path: c.req.path,
+    reqId: c.get("reqId"),
+  });
+  console.error(`[錯誤] ${normalized.publicMessage}`, err);
+  const reqId = c.get("reqId");
+  if (reqId) c.header("X-Request-Id", String(reqId));
+  const debugMessage = normalized.expose ? null : sanitizeErrorMessageForClient(normalized.originalError?.message || err);
+  return c.json(
+    createErrorResponse(
+      normalized.status,
+      normalized.expose ? normalized.publicMessage : "伺服器內部錯誤",
+      normalized.code,
+      {
+        ...(reqId ? { requestId: String(reqId) } : {}),
+        ...(debugMessage ? { debugMessage } : {}),
+      }
+    ),
+    normalized.status
+  );
+});
+
+// 404路由處理
+app.notFound((c) => {
+  const reqId = c.get("reqId");
+  if (reqId) c.header("X-Request-Id", String(reqId));
+  return c.json(
+    createErrorResponse(ApiStatus.NOT_FOUND, "未找到請求的資源", "NOT_FOUND"),
+    ApiStatus.NOT_FOUND
+  );
+});
+
+// 將應用匯出為預設值
+export default app;

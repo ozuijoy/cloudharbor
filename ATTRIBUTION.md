@@ -1,0 +1,35 @@
+# Attribution / 來源聲明
+
+本專案（以下稱 **CloudHarbor**）是 **CloudPaste** 的衍生版本（fork / derivative work）。
+
+- 上游專案：CloudPaste
+- 上游原始碼：https://github.com/ling-drag0n/CloudPaste （Copyright 2023-present CloudPaste Contributors）
+- 授權條款：Apache License 2.0（見 `LICENSE`）
+
+CloudPaste 已停止維護，本專案在其基礎上進行了以下改造後以新名稱發佈：
+
+1. **套件安全升級**：後端 `npm audit` 由 39 項弱點降為 0；前端由 31 項（22 high）降為 4 項 low。
+2. **上傳失敗／斷線修正**：見 `CHANGELOG-zhTW.md` 第二節。
+3. **簡體中文 → 正體中文（台灣）**：650+ 檔，語言標識 `zh-CN` → `zh-TW`。
+4. **專案更名**：`CloudPaste` / `cloudpaste` → `CloudHarbor` / `cloudharbor`（含 DB 檔名、
+   Docker 映像與網路名稱、Cloudflare 資源名、localStorage 鍵、CSS class、User-Agent 等）。
+
+## 遷移注意事項（重要）
+
+因為更名涉及**持久化識別字**，從舊版升級時請注意：
+
+| 項目 | 舊值 | 新值 | 影響 |
+| --- | --- | --- | --- |
+| SQLite 資料庫檔名 | `data/cloudpaste.db` | `data/cloudharbor.db` | 需把舊檔案改名，或在 `DATA_DIR` 下建立連結，否則會以空資料庫啟動 |
+| localStorage 鍵 | `cloudpaste_*`、`cloudpaste-*`、`cloudpaste.*` | `cloudharbor*` | 使用者端偏好設定（語言、主題、除錯旗標等）會回到預設值 |
+| Docker 映像 | `dragon730/cloudpaste-*` | `cloudharbor-*`（請改成自己的 registry） | `docker-compose.yml` 需同步修改 |
+| Docker 網路 | `cloudpaste-network` | `cloudharbor-network` | 舊網路會殘留，需手動移除 |
+| Cloudflare 資源 | `cloudpaste-db` / `cloudpaste-spa` / `cloudpaste-frontend` / `cloudpaste-backend` | `cloudharbor-*` | 若沿用既有資源，請改回原名或先在 CF 後台改名 |
+| 資料庫 / 應用顯示名稱 | `CloudPaste` | `CloudHarbor` | 可在「站點設定」調整，`site_title` 預設值已更新 |
+
+## 仍使用第三方商標之處
+
+- README 徽章、GitHub/Docker 連結已改為 `YOUR_GITHUB/YOUR_REPO`、`YOUR_DOCKERHUB/...` 佔位符，
+  發佈前請自行替換。
+- `frontend/src/App.vue` 的 `githubUrl`、`AdminSidebar.vue` 的 `DOC_URL` 已清空，
+  請填入你自己的倉庫／文件站。

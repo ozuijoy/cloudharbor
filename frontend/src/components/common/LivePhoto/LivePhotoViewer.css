@@ -1,0 +1,344 @@
+/**
+ * Live Photo Viewer 樣式
+ *
+ */
+
+/* CSS 變數定義 */
+:root {
+  --live-photo-border-radius: 8px;
+  --live-photo-transition-duration: 0.3s;
+  --live-photo-badge-bg: rgba(255, 255, 255, 0.9);
+  --live-photo-badge-color: #333;
+  --live-photo-badge-bg-dark: rgba(0, 0, 0, 0.7);
+  --live-photo-badge-color-dark: #fff;
+  --live-photo-progress-color: linear-gradient(90deg, #007aff, #5856d6);
+  --live-photo-warning-bg: rgba(255, 243, 205, 0.95);
+  --live-photo-warning-color: #9a6700;
+  --live-photo-error-bg: rgba(255, 59, 48, 0.9);
+  --live-photo-error-color: #fff;
+}
+
+/* 主容器 */
+.live-photo-viewer {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--live-photo-border-radius);
+  background-color: #f3f4f6;
+  container-type: inline-size;
+}
+
+.live-photo-viewer--dark {
+  background-color: #1f2937;
+}
+
+/* 媒體容器 */
+.live-photo-viewer__media {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* 內容框：用於在外層約束 */
+.live-photo-viewer__content {
+  position: absolute;
+  /* 避免部分瀏覽器（尤其是影片層參與合成時）出現 hover 觸發的合成抖動 */
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+/* 影片和圖片基礎樣式 */
+.live-photo-viewer__video,
+.live-photo-viewer__image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-position: center;
+  transition: opacity var(--live-photo-transition-duration) ease, transform var(--live-photo-transition-duration) ease;
+  transform: translateZ(0);
+  will-change: opacity, transform;
+}
+
+/* 影片層 */
+.live-photo-viewer__video {
+  z-index: 1;
+  opacity: 0;
+  /* 影片允許輕微裁切以填滿內容框；內容框本身按靜態圖比例計算，不會導致豎圖被裁切 */
+  object-fit: cover;
+}
+
+/* 圖片層 */
+.live-photo-viewer__image {
+  z-index: 2;
+  /* 靜態圖必須完整可見，避免豎圖/長圖被裁切 */
+  object-fit: contain;
+}
+
+/* 播放狀態 */
+.live-photo-viewer--playing .live-photo-viewer__video {
+  opacity: 1;
+}
+
+.live-photo-viewer--playing .live-photo-viewer__image {
+  opacity: 0;
+}
+
+/* 縮放效果 */
+.live-photo-viewer--playing .live-photo-viewer__video,
+.live-photo-viewer--playing .live-photo-viewer__image {
+  /* 避免播放時二次放大導致裁切 */
+  transform: none;
+}
+
+/* 進度條 */
+.live-photo-viewer__progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background-color: rgba(0, 0, 0, 0.1);
+  z-index: 10;
+  overflow: hidden;
+}
+
+.live-photo-viewer--dark .live-photo-viewer__progress {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.live-photo-viewer__progress-bar {
+  height: 100%;
+  background: var(--live-photo-progress-color);
+  transition: width 0.3s ease;
+}
+
+/* 徽章圖示 */
+.live-photo-viewer__badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: calc(var(--live-photo-border-radius) / 2);
+  background-color: var(--live-photo-badge-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.live-photo-viewer--dark .live-photo-viewer__badge {
+  background-color: var(--live-photo-badge-bg-dark);
+}
+
+.live-photo-viewer__badge:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/*播放中降級這些特效，保持畫面穩定（移動端無 hover，不受影響）。 */
+.live-photo-viewer--playing .live-photo-viewer__badge {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.live-photo-viewer--playing .live-photo-viewer__badge:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.live-photo-viewer__badge--static {
+  cursor: default;
+}
+
+.live-photo-viewer__badge--static:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* 徽章圖示 */
+.live-photo-viewer__badge-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--live-photo-badge-color);
+  flex-shrink: 0;
+}
+
+.live-photo-viewer--dark .live-photo-viewer__badge-icon {
+  color: var(--live-photo-badge-color-dark);
+}
+
+.live-photo-viewer__badge-icon--error {
+  color: #ef4444;
+}
+
+/* 播放時圖示旋轉動畫 */
+.live-photo-viewer--playing .live-photo-viewer__badge-icon {
+  animation: live-photo-spin 3s linear infinite;
+}
+
+@keyframes live-photo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 徽章文字 */
+.live-photo-viewer__badge-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--live-photo-badge-color);
+  white-space: nowrap;
+}
+
+.live-photo-viewer--dark .live-photo-viewer__badge-text {
+  color: var(--live-photo-badge-color-dark);
+}
+
+/* 響應式：小尺寸時隱藏文字 */
+@container (max-width: 200px) {
+  .live-photo-viewer__badge-text {
+    display: none;
+  }
+
+  .live-photo-viewer__badge {
+    padding: 6px;
+  }
+}
+
+/* 觸控覆蓋層 */
+.live-photo-viewer__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 警告提示 */
+.live-photo-viewer__warning {
+  position: absolute;
+  top: 50px;
+  left: 10px;
+  right: 10px;
+  z-index: 15;
+  padding: 8px 12px;
+  border-radius: calc(var(--live-photo-border-radius) / 2);
+  background-color: var(--live-photo-warning-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--live-photo-warning-color);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* 錯誤狀態的警告樣式 */
+.live-photo-viewer--error .live-photo-viewer__warning {
+  background-color: var(--live-photo-error-bg);
+  color: var(--live-photo-error-color);
+}
+
+/* 警告動畫 */
+.live-photo-warning-enter-active,
+.live-photo-warning-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.live-photo-warning-enter-from,
+.live-photo-warning-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+/* 載入指示器 */
+.live-photo-viewer__loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+}
+
+/* 載入狀態 */
+.live-photo-viewer--loading .live-photo-viewer__badge {
+  opacity: 0.7;
+}
+
+/* 錯誤狀態 */
+.live-photo-viewer--error .live-photo-viewer__badge {
+  background-color: var(--live-photo-error-bg);
+}
+
+.live-photo-viewer--error .live-photo-viewer__badge-text {
+  color: var(--live-photo-error-color);
+}
+
+/* 移動端最佳化 */
+@media (hover: none) and (pointer: coarse) {
+  .live-photo-viewer__badge:hover {
+    transform: none;
+    box-shadow: none;
+  }
+
+  .live-photo-viewer__badge:active {
+    transform: scale(0.95);
+  }
+}
+
+/* 減少動畫（無障礙） */
+@media (prefers-reduced-motion: reduce) {
+  .live-photo-viewer__video,
+  .live-photo-viewer__image,
+  .live-photo-viewer__badge,
+  .live-photo-viewer__progress-bar {
+    transition: none;
+  }
+
+  .live-photo-viewer--playing .live-photo-viewer__badge-icon {
+    animation: none;
+  }
+
+}
+
+/* 高對比度模式 */
+@media (prefers-contrast: high) {
+  .live-photo-viewer__badge {
+    border: 2px solid currentColor;
+  }
+
+  .live-photo-viewer__warning {
+    border: 2px solid currentColor;
+  }
+}
+
+/* 列印樣式 */
+@media print {
+  .live-photo-viewer__badge,
+  .live-photo-viewer__progress,
+  .live-photo-viewer__overlay,
+  .live-photo-viewer__warning,
+  .live-photo-viewer__loading {
+    display: none;
+  }
+
+  .live-photo-viewer__video {
+    display: none;
+  }
+
+  .live-photo-viewer__image {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

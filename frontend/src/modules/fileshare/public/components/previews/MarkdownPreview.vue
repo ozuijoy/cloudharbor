@@ -1,0 +1,189 @@
+<template>
+  <div class="markdown-preview rounded-lg overflow-hidden mb-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex-grow flex flex-col w-full">
+    <div class="flex items-center justify-between p-2 bg-gray-100 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
+      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t("fileView.preview.markdown.title") }}</span>
+      <div class="flex items-center gap-3">
+        <!-- 統計資訊 -->
+        <div v-if="textContent" class="text-xs text-gray-500 dark:text-gray-400 flex gap-2">
+          <span>{{ lineCount }} L</span>
+          <span>{{ characterCount }} Chars</span>
+        </div>
+        <!-- 編碼選擇器 -->
+        <div v-if="textContent" class="flex items-center gap-1">
+          <span class="text-xs text-gray-500 dark:text-gray-400">Enc:</span>
+          <select
+            v-model="currentEncoding"
+            @change="handleEncodingChange"
+            class="text-xs px-1 py-0.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+          >
+            <option v-for="encoding in availableEncodings" :key="encoding.value" :value="encoding.value">
+              {{ encoding.label }}
+            </option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="p-4 overflow-auto flex-grow relative" style="max-height: calc(100vh - 350px); min-height: 200px">
+      <!-- 使用統一的 TextRenderer 元件，設定為 markdown 模式 -->
+      <TextRenderer
+        v-if="textContent"
+        :content="textContent"
+        :mode="'markdown'"
+        :language="'markdown'"
+        :filename="adaptedFileData?.name || ''"
+        :dark-mode="darkMode"
+        :show-line-numbers="false"
+        :read-only="true"
+        :show-stats="false"
+        :max-height="'100%'"
+        @load="handleLoad"
+        @error="handleError"
+      />
+      <!-- 缺少內容URL或載入失敗 -->
+      <div v-else-if="urlError" class="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-700">
+        <p class="text-red-600 dark:text-red-400 text-sm">{{ urlError }}</p>
+      </div>
+      <!-- Markdown載入狀態 -->
+      <div v-else class="absolute inset-0 flex items-center justify-center">
+        <LoadingIndicator
+          :text="t('fileView.preview.markdown.loading')"
+          :dark-mode="darkMode"
+          size="xl"
+          icon-class="text-blue-500"
+          :text-class="darkMode ? 'text-blue-400' : 'text-blue-600'"
+        />
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
+import LoadingIndicator from "@/components/common/LoadingIndicator.vue";
+import TextRenderer from "@/components/common/text-preview/TextRenderer.vue";
+import { useFetchText } from "@/composables/text-preview/useFetchText.js";
+import { createLogger } from "@/utils/logger.js";
+
+const { t } = useI18n();
+const log = createLogger("PublicMarkdownPreview");
+
+const props = defineProps({
+  contentUrl: {
+    type: String,
+    required: true,
+  },
+  darkMode: {
+    type: Boolean,
+    default: false,
+  },
+});
+
+const emit = defineEmits(["load", "error"]);
+
+// 響應式資料
+const textContent = ref("");
+const currentEncoding = ref("utf-8");
+const urlError = ref("");
+
+// 統計資訊計算
+const lineCount = computed(() => {
+  if (!textContent.value) return 0;
+  return textContent.value.split("\n").length;
+});
+
+const characterCount = computed(() => {
+  if (!textContent.value) return 0;
+  return textContent.value.length;
+});
+
+// 使用文字獲取 Composable
+const { fetchText, reDecodeWithEncoding, availableEncodings } = useFetchText();
+
+// 適配資料結構
+const adaptedFileData = computed(() => {
+  if (!props.contentUrl) return null;
+
+  return {
+    name: "markdown-file.md",
+    filename: "markdown-file.md",
+    // Markdown 內容統一透過 contentUrl 訪問
+    contentUrl: props.contentUrl,
+    contentType: "text/markdown",
+  };
+});
+
+// 載入文字內容
+const loadTextContent = async () => {
+  if (!adaptedFileData.value) {
+    log.warn("沒有可用的檔案資料");
+    return;
+  }
+
+  try {
+    const effectiveUrl = adaptedFileData.value.contentUrl;
+    if (!effectiveUrl) {
+      log.warn("缺少可用的 Markdown 內容 URL");
+      return;
+    }
+
+    const result = await fetchText(effectiveUrl, adaptedFileData.value);
+
+    if (result.success) {
+      textContent.value = result.text;
+      currentEncoding.value = result.encoding || "utf-8";
+      urlError.value = "";
+
+      emit("load", result);
+    } else {
+      urlError.value = result.error || "預覽 URL 不可用";
+      emit("error", result.error);
+    }
+  } catch (err) {
+    log.error("載入Markdown內容失敗:", err);
+    urlError.value = err.message || "預覽 URL 不可用";
+    emit("error", err.message);
+  }
+};
+
+// 處理編碼切換
+const handleEncodingChange = async () => {
+  if (!adaptedFileData.value) return;
+
+  try {
+    const result = await reDecodeWithEncoding(currentEncoding.value);
+
+    if (result.success) {
+      textContent.value = result.text;
+    } else {
+      log.error("編碼切換失敗:", result.error);
+    }
+  } catch (err) {
+    log.error("編碼切換失敗:", err);
+  }
+};
+
+// 事件處理
+const handleLoad = () => {
+  // TextRenderer 的 load 事件，這裡不需要額外處理
+};
+
+const handleError = (error) => {
+  emit("error", error);
+};
+
+// 監聽內容URL變化
+watch(
+  () => props.contentUrl,
+  (url) => {
+    if (!url) {
+      urlError.value = "預覽 URL 不可用";
+      emit("error", urlError.value);
+      return;
+    }
+    urlError.value = "";
+    loadTextContent();
+  },
+  { immediate: true }
+);
+</script>

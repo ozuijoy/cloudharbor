@@ -1,0 +1,29 @@
+.git
+.gitignore
+.github
+
+# 本地構建產物 / 依賴快取
+**/node_modules
+/dist
+/frontend/dist
+/backend/dist
+**/.vite
+**/.cache
+
+# 本地資料/執行目錄
+sql_data
+data
+logs
+*.log
+
+# 本地工具與臨時檔案
+.codex
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+*.bak
+
+# 環境變數檔案
+.env
+.env.*

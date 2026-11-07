@@ -1,0 +1,60 @@
+# Cloudflare Workers + Static Assets 一體化部署配置
+# 用途：將前端靜態資源和後端 API 部署到同一個 Worker
+# 使用方式：npx wrangler deploy --config wrangler.spa.toml
+
+name = "cloudharbor-spa"
+main = "unified-entry.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 開發伺服器配置
+[dev]
+port = 8787
+local_protocol = "http"
+
+# 環境變數
+[vars]
+# 用於加密敏感配置的金鑰
+ENCRYPTION_SECRET = "default-encryption-key"
+# 管理員Token過期天數，預設7天
+ADMIN_TOKEN_EXPIRY_DAYS = "7"
+#
+# 除錯開關（預設 false，不區分大小寫）
+# - DEBUG_DRIVER_CACHE=true：開啟驅動快取命中日誌
+# DEBUG_DRIVER_CACHE = "false"
+
+# 繫結D1資料庫
+# 需要替換為實際的資料庫ID
+[[d1_databases]]
+binding = "DB"
+database_name = "cloudharbor-db"
+database_id = "xxxxxxxxxxxxxxxxx"
+
+# Cloudflare Workflows 繫結
+# 用於非同步任務作業的持久化執行 (支援多工型別)
+[[workflows]]
+binding = "JOB_WORKFLOW"
+name = "job-workflow"
+class_name = "JobWorkflow"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+# ==================== Static Assets 配置 ====================
+# 用於託管前端靜態資源
+[assets]
+# 靜態資源目錄（相對於 backend/ 目錄）
+directory = "../frontend/dist"
+
+# SPA 模式：前端路由重新整理時返回 index.html（避免 404）
+not_found_handling = "single-page-application"
+
+# 配置：明確指定這些路徑優先進入 Worker 處理
+# 防止 API 請求被 SPA fallback 攔截
+run_worker_first = ["/api/*", "/dav/*"]
+
+# ==================== 路由優先順序說明 ====================
+# 1. /api/* 和 /dav/* -> 優先進入 Worker 處理（run_worker_first）
+# 2. 靜態檔案存在 -> 直接返回（不呼叫 Worker）
+# 3. 前端路由（瀏覽器導航）-> 返回 index.html（SPA fallback）
+# 4. 導航請求在 compatibility_date >= 2025-04-01 時不計費

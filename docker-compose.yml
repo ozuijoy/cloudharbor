@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  frontend:
+    # context: .
+    #   dockerfile: docker/frontend/Dockerfile
+    #   args:
+    #     - VITE_BACKEND_URL= #構建時可以為空，因為會由entrypoint.sh覆蓋
+    image: cloudharbor-frontend:latest  # 或改成你自己的 Docker Hub 帳號/cloudharbor-frontend:latest
+    environment:
+      - BACKEND_URL=https://xxx.com # 填寫後端服務地址，透過nginx反向代理控制即可。#執行時環境變數，將被entrypoint.sh使用
+    ports:
+      - "8080:80" #"127.0.0.1:8080:80"
+    depends_on:
+      - backend # 依賴backend服務,後端服務啟動後，前端服務才能啟動
+    networks:
+      - cloudharbor-network
+    restart: unless-stopped
+
+  backend:
+    # build:
+    #   context: .
+    #   dockerfile: docker/backend/Dockerfile
+    image: cloudharbor-backend:latest   # 或改成你自己的 Docker Hub 帳號/cloudharbor-backend:latest
+    environment:
+      - NODE_ENV=production # 生產環境模式
+      - PORT=8787 # 應用監聽埠
+      # 重要: 請修改為您自己的安全金鑰，用於加密資料
+      - ENCRYPTION_SECRET=default-encryption-key
+      # 管理員Token過期天數，預設7天
+      - ADMIN_TOKEN_EXPIRY_DAYS=7
+      # 任務併發數 (預設 2)
+      - TASK_WORKER_POOL_SIZE=2
+      # 除錯驅動快取 (預設 false)
+      #- DEBUG_DRIVER_CACHE=false
+    volumes:
+      - ./sql_data:/data # 將當前目錄下的sql_data對映到容器的/data目錄
+    ports:
+      - "8787:8787" #"127.0.0.1:8787:8787"
+    networks:
+      - cloudharbor-network
+    restart: unless-stopped # 容器異常退出時自動重啟
+
+networks:
+  cloudharbor-network:
+    driver: bridge
