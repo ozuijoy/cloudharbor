@@ -136,6 +136,7 @@ const renderMarkdown = async () => {
           path: `${VDITOR_ASSETS_BASE}/dist/css/content-theme`,
         },
         cdn: VDITOR_ASSETS_BASE,
+        lang: "zh_TW", // 介面文案使用正體中文（i18n/zh_TW.js）
         hljs: {
           lineNumber: true, // 程式碼塊顯示行號
           style: props.darkMode ? "vs2015" : "github", // 程式碼高亮樣式

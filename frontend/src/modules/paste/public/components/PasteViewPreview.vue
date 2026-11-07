@@ -249,6 +249,7 @@ const renderContentInternal = async (content) => {
               path: `${VDITOR_ASSETS_BASE}/dist/css/content-theme`,
             },
             cdn: VDITOR_ASSETS_BASE,
+            lang: "zh_TW", // 介面文案使用正體中文（i18n/zh_TW.js）
             hljs: {
               // 效能最佳化：只有確實存在程式碼塊時才顯示行號，避免無意義的行號計算
               lineNumber: hasCodeFence,

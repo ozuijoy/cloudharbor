@@ -98,6 +98,7 @@ const renderContent = async () => {
     // 使用 Vditor 的預覽功能渲染 Markdown
     Vditor.preview(contentRef.value, props.content, {
       cdn: VDITOR_ASSETS_BASE,
+      lang: "zh_TW", // 介面文案使用正體中文（i18n/zh_TW.js）
       theme: {
         current: props.darkMode ? "dark" : "light",
         path: `${VDITOR_ASSETS_BASE}/dist/css/content-theme`,

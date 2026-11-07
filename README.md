@@ -4,7 +4,7 @@
 
 <div align="center">
     <p>
-    <a href="README_CN.md">中文</a> | <a href="README.md">English</a> |
+    <a href="README_zh-TW.md">繁體中文</a> | <a href="README.md">English</a> |
     <a href="https://www.readme-i18n.com/ozuijoy/cloudharbor?lang=es">Español</a> |
     <a href="https://www.readme-i18n.com/ozuijoy/cloudharbor?lang=fr">français</a> |
     <a href="https://www.readme-i18n.com/ozuijoy/cloudharbor?lang=ja">日本語</a>

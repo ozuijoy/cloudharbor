@@ -106,8 +106,8 @@ const getCronDescription = (cronExpression) => {
   if (!cronExpression) return '-';
   try {
     // 根據當前語言環境選擇 cronstrue 的語言
-    // cronstrue 僅提供 zh_CN 語系（無 zh_TW），華語一律對應到 zh_CN
-    const lang = String(locale.value || '').toLowerCase().startsWith('zh') ? 'zh_CN' : 'en';
+    // cronstrue 內建 zh_TW 語系，華語一律對應到 zh_TW
+    const lang = String(locale.value || '').toLowerCase().startsWith('zh') ? 'zh_TW' : 'en';
     return cronstrue.toString(cronExpression, { locale: lang });
   } catch (error) {
     console.warn('解析 cron 表示式失敗:', error);
@@ -276,7 +276,7 @@ const cronHint = computed(() => {
 
   try {
     const currentLocale = (locale.value || "zh-TW").toLowerCase();
-    const cronLocale = currentLocale.startsWith("zh") ? "zh_CN" : "en";
+    const cronLocale = currentLocale.startsWith("zh") ? "zh_TW" : "en";
     return cronstrue.toString(expr, {
       locale: cronLocale,
       use24HourTimeFormat: true,

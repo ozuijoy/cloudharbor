@@ -179,7 +179,7 @@ proxy_read_timeout 3600s;
 ## 三、簡體中文 → 正體中文
 
 - 以 OpenCC `s2twp`（臺灣正體＋用語）轉換 **651 個檔案**：後端原始碼／註解／API 訊息、
-  前端 `.vue`／`.js`、i18n 語系檔、Docker 設定、`README_CN.md`、API 文件等。
+  前端 `.vue`／`.js`、i18n 語系檔、Docker 設定、`README_zh-TW.md`、API 文件等。
   已排除第三方 vendor（`frontend/public/assets/**`、`frontend/public/libarchive.js`）。
 - 語系目錄 `frontend/src/i18n/locales/zh-CN/` → **`zh-TW/`**。
 - 網頁語言標識 `zh-CN` → **`zh-TW`**：
@@ -192,9 +192,8 @@ proxy_read_timeout 3600s;
     （改為 `zh*` 皆視為中文，較寬鬆）
   - `frontend/src/components/paste-view/preview/HtmlPreviewModal.vue` 預覽頁 `lang`
   - `backend/src/utils/httpMasquerade.js` `Accept-Language: zh-TW,...`
-- **保留不動**（外部套件自身的語系識別碼，與網頁語言標識無關，改了會壞）：
-  - `@uppy/locales/lib/zh_CN`（Uppy 內建語系檔名）
-  - `cronstrue` 的 `zh_CN`（該套件沒有 `zh_TW` 語系）
+- **外部套件語系**：`@uppy/locales` 與 `cronstrue` 均內建 `zh_TW`，已改用正體中文語系；
+  Vditor 介面文案改以 `lang: "zh_TW"` 載入 `assets/vditor/.../i18n/zh_TW.js`。
 
 ---
 
@@ -276,9 +275,22 @@ files generated
 
 ## 八、交付內容修正（依回饋）
 
-- `README.md` / `README_CN.md`：`YOUR_GITHUB/YOUR_REPO`（15 處）、`YOUR_DOCKERHUB`（8 處）與
+- `README.md` / `README_zh-TW.md`：`YOUR_GITHUB/YOUR_REPO`（15 處）、`YOUR_DOCKERHUB`（8 處）與
   失效的 `ling-drag0n/cloudharbor.git` clone 連結，全部改為實際倉庫 `ozuijoy/cloudharbor`；
   Contributors / Star History / Docker Pulls 徽章同步修正（含 `/graphs` 缺少斜線的舊錯誤）。
 - 移除上游作者的贊助／收款碼區塊與 `images/PayQrcode.png`。
 - `App.vue` 的 `githubUrl`、`AdminSidebar.vue` 的 `DOC_URL` 填入本專案位址。
 - 從交付內容移除 `rename_project*.py`（3 檔）：僅為開發期一次性更名工具，非部署或執行所需。
+
+## 九、命名一致性收尾（README / 語系識別碼）
+
+- `README_CN.md` → **`README_zh-TW.md`**：檔名不再帶 `CN`。`README.md`、`README_zh-TW.md` 互相連結、
+  `ATTRIBUTION.md`、`CHANGELOG-zhTW.md` 與 `AdminSidebar.vue` 的 `DOC_URL` 全部同步改指新檔名，
+  語言切換標籤改為「繁體中文 / English」。
+- 程式碼內的語系識別碼全面改為 `zh-TW` / `zh_TW`：
+  - `@uppy/locales/lib/zh_CN` → `zh_TW`
+  - `cronstrue` locale `zh_CN` → `zh_TW`（`ScheduledJobForm.vue`、`ScheduledJobFormContent.vue`）
+  - Vditor `lang: "zh_TW"`（`VditorUnified.vue`、`AnnouncementModal.vue`、
+    `FooterMarkdownRenderer.vue`、`MarkdownDisplay.vue`）
+- 現況：專案內已無任何 `README_CN`、`zh_CN` 引用；僅 `node_modules` 與 Vditor 套件自帶的
+  `i18n/zh_CN.js` 保留原樣（第三方資產，已不再被載入）。

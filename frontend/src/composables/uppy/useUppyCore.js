@@ -3,9 +3,8 @@
  */
 import { shallowRef } from 'vue';
 import Uppy from '@uppy/core';
-// 注意：@uppy/locales 內建的華語語系檔名固定為 zh_CN（套件本身的資源命名），
-// 與本專案網頁語言標識 zh-TW 無關，這裡僅借用其翻譯字串。
-import ChineseLocale from '@uppy/locales/lib/zh_CN';
+// 使用 @uppy/locales 內建的 zh_TW（正體中文）語系檔。
+import ChineseTraditionalLocale from '@uppy/locales/lib/zh_TW';
 import EnglishLocale from '@uppy/locales/lib/en_US';
 import { createLogger } from '@/utils/logger.js';
 
@@ -14,7 +13,7 @@ import { createLogger } from '@/utils/logger.js';
  */
 const getUppyLocale = (locale) => {
   const normalized = String(locale || '').toLowerCase();
-  return normalized.startsWith('zh') ? ChineseLocale : EnglishLocale;
+  return normalized.startsWith('zh') ? ChineseTraditionalLocale : EnglishLocale;
 };
 
 /**

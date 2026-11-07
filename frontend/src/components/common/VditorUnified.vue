@@ -253,6 +253,7 @@ const getEditorConfig = () => {
     mode: defaultMode, // 保持原有的響應式模式邏輯
     theme: editorTheme,
     cdn: VDITOR_ASSETS_BASE,
+    lang: "zh_TW", // 介面文案使用正體中文（i18n/zh_TW.js）
     resize: {
       enable: true,
       position: "bottom",

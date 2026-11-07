@@ -34,6 +34,6 @@ CloudPaste 已停止維護，本專案在其基礎上進行了以下改造後以
 - Docker 映像統一為 `ozuijoy/cloudharbor-backend`、`ozuijoy/cloudharbor-frontend`；若改用其他
   Docker Hub 帳號，請全域替換 `ozuijoy/` 並同步 `.github/workflows` 的 `DOCKERHUB_USERNAME`。
 - `frontend/src/App.vue` 的 `githubUrl` 指向本專案倉庫；`AdminSidebar.vue` 的 `DOC_URL`
-  指向本專案 `README_CN.md`，如有獨立文件站可自行替換。
+  指向本專案 `README_zh-TW.md`，如有獨立文件站可自行替換。
 - 已移除上游作者的贊助／收款碼區塊（含 `images/PayQrcode.png`），避免與本專案混淆；
   上游授權與版權聲明仍保留於 `LICENSE` 與本文件。
