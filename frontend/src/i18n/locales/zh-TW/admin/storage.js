@@ -355,7 +355,7 @@ export default {
 
       telegram: {
         bot_token: "用於呼叫 Telegram Bot API 上傳/下載檔案",
-        target_chat_id: "檔案會被髮送到這個頻道/群（需要把 bot 拉進並授予發訊息許可權）",
+        target_chat_id: "檔案會被發送到這個頻道/群（需要把 bot 拉進並授予發訊息許可權）",
         endpoint_url: "預設官方地址；如果你後續自建 Bot API server，可以切到自建地址",
         bot_api_mode: "未勾選自建：按官方 Bot API 規則單次最大上傳大小 ≤20MB ；勾選自建：你自己提供 Bot API Server，可放寬這些限制",
         part_size_mb: "掛載頁斷點續傳的分片大小；預設 15MB。未勾選自建時建議 ≤20MB；勾選自建可不限制",
@@ -404,6 +404,10 @@ export default {
         use_online_api: {
           enabled: "Online API",
           disabled: "標準 API",
+        },
+        oauth_status: {
+          authorized: "✅ 已授權",
+          missing: "⚠️ 未設定",
         },
       },
       googledrive: {

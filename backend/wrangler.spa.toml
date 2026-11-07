@@ -34,7 +34,7 @@ database_id = "xxxxxxxxxxxxxxxxx"
 # 用於非同步任務作業的持久化執行 (支援多工型別)
 [[workflows]]
 binding = "JOB_WORKFLOW"
-name = "job-workflow"
+name = "cloudharbor-job-workflow"
 class_name = "JobWorkflow"
 
 [triggers]

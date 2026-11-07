@@ -294,3 +294,20 @@ files generated
     `FooterMarkdownRenderer.vue`、`MarkdownDisplay.vue`）
 - 現況：專案內已無任何 `README_CN`、`zh_CN` 引用；僅 `node_modules` 與 Vditor 套件自帶的
   `i18n/zh_CN.js` 保留原樣（第三方資產，已不再被載入）。
+
+## 十、交付前全面複查與收尾修正
+
+- 修正簡繁誤轉：`zh-TW/admin/storage.js` 的「檔案會被髮送到」→「發送」。
+- i18n 補齊：`zh-TW/admin/storage.js` 的 `display.onedrive.oauth_status.{authorized,missing}` 已與 en-US
+  對齊（`✅ 已授權` / `⚠️ 未設定`）；比對後 zh-TW 只多不少。
+- `frontend/.gitignore` 補 `dist`（原本只有 `dev-dist`，clone 後建置會留下未追蹤檔案）。
+- 移除非部署檔案：`.idea/`（4 檔）與 `frontend/.vscode/`（1 檔）；其中 `.idea/.gitignore`
+  原本仍是簡體中文。
+- `frontend/package.json`、`frontend/package-lock.json` 套件名稱改為 `cloudharbor-frontend`
+  （後端為 `cloudharbor-api`）。
+- `wrangler.toml`、`wrangler.spa.toml`：Cloudflare Workflows 的 `name` 由 `job-workflow` 改為
+  `cloudharbor-job-workflow`；`binding` 仍為 `JOB_WORKFLOW`，程式端無須修改（雲端既有 workflow
+  需同步改名或讓其重新建立）。
+- `UppyPluginManager.js` 的註解用語改寫，不再出現 `zh-CN` 字樣。
+- 後端新增 `test/utils.test.js`（8 項，涵蓋 `utils/common.js` 與 `http/errors.js`），
+  `npm test` 從「0 個測試」變成可實際驗證。

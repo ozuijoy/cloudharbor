@@ -66,7 +66,7 @@ export class UppyPluginManager {
    * 獲取外掛國際化文字
    */
   getPluginTexts() {
-    // 只要是華語語系（zh-TW / zh-Hant / zh-CN …）都使用中文外掛文案
+    // 只要是華語語系（zh-TW / zh-Hant / 其他 zh 開頭的語系）都使用中文外掛文案
     const isZh = String(this.locale || "").toLowerCase().startsWith("zh");
     return {
       webcam: {
