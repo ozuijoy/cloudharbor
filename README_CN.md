@@ -5,20 +5,20 @@
 <div align="center">
     <p>
     <a href="README_CN.md">中文</a> | <a href="README.md">English</a> |
-    <a href="https://www.readme-i18n.com/YOUR_GITHUB/YOUR_REPO?lang=es">Español</a> |
-    <a href="https://www.readme-i18n.com/YOUR_GITHUB/YOUR_REPO?lang=fr">français</a> |
-    <a href="https://www.readme-i18n.com/YOUR_GITHUB/YOUR_REPO?lang=ja">日本語</a>
+    <a href="https://www.readme-i18n.com/ozuijoy/cloudharbor?lang=es">Español</a> |
+    <a href="https://www.readme-i18n.com/ozuijoy/cloudharbor?lang=fr">français</a> |
+    <a href="https://www.readme-i18n.com/ozuijoy/cloudharbor?lang=ja">日本語</a>
     </p>
     <img width="100" height="100" src="https://img.icons8.com/dusk/100/paste.png" alt="paste"/>
     <h3>🌩️ Serverless 檔案管理與 Markdown 分享工具，支援多種儲存聚合、30+檔案格式線上預覽 與 WebDAV掛載</h3>
 </div>
 
 <div align="center">
-    <a href="https://deepwiki.com/YOUR_GITHUB/YOUR_REPO"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+    <a href="https://deepwiki.com/ozuijoy/cloudharbor"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
     <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
-    <a href="https://github.com/YOUR_GITHUB/YOUR_REPO/stargazers"><img src="https://img.shields.io/github/stars/YOUR_GITHUB/YOUR_REPO.svg" alt="GitHub Stars"></a>
+    <a href="https://github.com/ozuijoy/cloudharbor/stargazers"><img src="https://img.shields.io/github/stars/ozuijoy/cloudharbor.svg" alt="GitHub Stars"></a>
     <a href="https://www.cloudflare.com/"><img src="https://img.shields.io/badge/Powered%20by-Cloudflare-F38020?logo=cloudflare" alt="Powered by Cloudflare"></a>
-    <a href="https://hub.docker.com/r/YOUR_DOCKERHUB/cloudharbor-backend"><img src="https://img.shields.io/docker/pulls/YOUR_DOCKERHUB/cloudharbor-backend.svg" alt="Docker Pulls"></a>
+    <a href="https://hub.docker.com/r/ozuijoy/cloudharbor-backend"><img src="https://img.shields.io/docker/pulls/ozuijoy/cloudharbor-backend.svg" alt="Docker Pulls"></a>
 </div>
 
 <p align="center">
@@ -164,7 +164,7 @@
 
 #### 1️⃣ Fork 或克隆倉庫
 
-訪問並 Fork 倉庫：[https://github.com/YOUR_GITHUB/YOUR_REPO](https://github.com/YOUR_GITHUB/YOUR_REPO)
+訪問並 Fork 倉庫：[https://github.com/ozuijoy/cloudharbor](https://github.com/ozuijoy/cloudharbor)
 
 #### 2️⃣ 配置 GitHub Secrets
 
@@ -397,7 +397,7 @@ CloudHarbor 支援兩種手動部署方式：一體化部署（推薦）和前�
 #### 步驟 1：克隆倉庫
 
 ```bash
-git clone https://github.com/YOUR_GITHUB/YOUR_REPO.git
+git clone https://github.com/ozuijoy/cloudharbor.git
 cd CloudHarbor
 ```
 
@@ -487,7 +487,7 @@ Published cloudharbor-spa (X.XX sec)
 1. 克隆倉庫
 
 ```bash
-git clone https://github.com/YOUR_GITHUB/YOUR_REPO.git
+git clone https://github.com/ozuijoy/cloudharbor.git
 cd CloudHarbor/backend
 ```
 
@@ -563,7 +563,7 @@ cd CloudHarbor/backend
    npm run build
    ```
 
-   [構建時需注意！！](https://github.com/YOUR_GITHUB/YOUR_REPO/issues)
+   [構建時需注意！！](https://github.com/ozuijoy/cloudharbor/issues)
 
 4. 部署到 Cloudflare Pages
 
@@ -673,7 +673,7 @@ CloudHarbor 後端支援透過官方 Docker 映象快速部署。
      -v $(pwd)/sql_data:/data \
      -e ENCRYPTION_SECRET=您的加密金鑰 \
      -e NODE_ENV=production \
-     YOUR_DOCKERHUB/cloudharbor-backend:latest
+     ozuijoy/cloudharbor-backend:latest
    ```
 
    記下部署的 URL（如 `http://your-server-ip:8787`），後續前端部署需要用到。
@@ -688,7 +688,7 @@ CloudHarbor 後端支援透過官方 Docker 映象快速部署。
 docker run -d --name cloudharbor-frontend \
   -p 80:80 \
   -e BACKEND_URL=http://your-server-ip:8787 \
-  YOUR_DOCKERHUB/cloudharbor-frontend:latest
+  ozuijoy/cloudharbor-frontend:latest
 ```
 
 **<span style="color:red">⚠️ 注意：BACKEND_URL 必須包含完整 URL（包括協議 http:// 或 https://）</span>**
@@ -701,8 +701,8 @@ docker run -d --name cloudharbor-frontend \
 1. 拉取最新映象
 
    ```bash
-   docker pull YOUR_DOCKERHUB/cloudharbor-backend:latest
-   docker pull YOUR_DOCKERHUB/cloudharbor-frontend:latest
+   docker pull ozuijoy/cloudharbor-backend:latest
+   docker pull ozuijoy/cloudharbor-frontend:latest
    ```
 
 2. 停止並移除舊容器
@@ -725,7 +725,7 @@ version: "3.8"
 
 services:
   frontend:
-    image: YOUR_DOCKERHUB/cloudharbor-frontend:latest
+    image: ozuijoy/cloudharbor-frontend:latest
     environment:
       - BACKEND_URL=https://xxx.com # 填寫後端服務地址
     ports:
@@ -737,7 +737,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: YOUR_DOCKERHUB/cloudharbor-backend:latest
+    image: ozuijoy/cloudharbor-backend:latest
     environment:
       - NODE_ENV=production
       - PORT=8787
@@ -1172,7 +1172,7 @@ location /dav {
 1. **克隆專案倉庫**
 
    ```bash
-   git clone https://github.com/ling-drag0n/cloudharbor.git
+   git clone https://github.com/ozuijoy/cloudharbor.git
    cd cloudharbor
    ```
 
@@ -1346,22 +1346,12 @@ Apache License 2.0
 
 ## ❤️ 貢獻
 
-- **贊助**：專案維護不易，喜歡本專案的話，可以作者大大一點小小的鼓勵哦，您的每一份支援都是我前進的動力\~
-
-  ![image.png](./images/PayQrcode.png)
-
-  <a href="https://afdian.com/a/drag0n"><img width="200" src="https://pic1.afdiancdn.com/static/img/welcome/button-sponsorme.png" alt=""></a>
-
-    - **贊助者**：非常感謝以下贊助者對本專案的支援！！
-
-      [![贊助者](https://afdian.730888.xyz/image)](https://afdian.com/a/drag0n)
-
 - **Contributors**：感謝以下貢獻者對本專案的無私貢獻！
 
-  [![Contributors](https://contrib.rocks/image?repo=YOUR_GITHUB/YOUR_REPO)](https://github.com/YOUR_GITHUB/YOUR_REPOgraphs/contributors)
+  [![Contributors](https://contrib.rocks/image?repo=ozuijoy/cloudharbor)](https://github.com/ozuijoy/cloudharbor/graphs/contributors)
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=YOUR_GITHUB/YOUR_REPO&type=Date)](https://star-history.com/#YOUR_GITHUB/YOUR_REPO&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=ozuijoy/cloudharbor&type=Date)](https://star-history.com/#ozuijoy/cloudharbor&Date)
 
 **如果覺得專案不錯希望您能給個免費的 star✨✨，非常感謝！**

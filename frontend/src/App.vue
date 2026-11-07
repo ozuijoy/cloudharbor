@@ -71,7 +71,7 @@ const isMobileMenuOpen = ref(false);
 const showEnvSwitcher = ref(false);
 
 // 專案倉庫連結（新專案請改成自己的倉庫；留空則不顯示圖示）
-const githubUrl = "";
+const githubUrl = "https://github.com/ozuijoy/cloudharbor";
 
 // 檢查是否為開發環境
 const isDev = import.meta.env.DEV;

@@ -79,7 +79,7 @@
 4. **本機儲存驅動把整個檔案讀進記憶體**（`backend/src/storage/drivers/local/LocalStorageDriver.js`）
    Web `ReadableStream` 原本以 `Buffer.concat` 全部讀入再寫檔；Docker 容器記憶體有限時，
    上傳大檔會 OOM 被 kill，前端即「連線中斷」。
-   → 新增 `_pipeWebStreamToFile()`，以 `Readable.fromWeb()` 邊讀邊寫，記憶體占用恆定；
+   → 新增 `_pipeWebStreamToFile()`，以 `Readable.fromWeb()` 邊讀邊寫，記憶體佔用恆定；
    串流失敗／客戶端斷線時會刪除寫了一半的檔案，避免留下損壞的半截檔。
 
 5. **`BACKEND_URL` 結尾斜線造成 404**（`frontend/src/api/config.js`、
@@ -252,9 +252,9 @@ files generated
   `Cloudpaste-Proxy.js` → `Cloudharbor-Proxy.js`、`.idea/cloudpaste.iml` → `.idea/cloudharbor.iml`。
 - 套件／產品識別：`backend/package.json` name `cloudharbor-api`、
   前端標題／PWA manifest 名稱、後端預設站點標題與頁尾皆為 `CloudHarbor`。
-- 對外連結：README 徽章與 Git 連結改為 `YOUR_GITHUB/YOUR_REPO`、Docker 映像改為
-  `YOUR_DOCKERHUB/...` 佔位符；`App.vue` 的 `githubUrl`、`AdminSidebar.vue` 的
-  `DOC_URL` 已清空，請自行填入。
+- 對外連結：README 徽章、`git clone` 指令、Star History 與 Discord 驅動 `User-Agent` 統一指向
+  `https://github.com/ozuijoy/cloudharbor`，Docker 映像為 `ozuijoy/cloudharbor-*`；
+  `App.vue` 的 `githubUrl`、`AdminSidebar.vue` 的 `DOC_URL` 已填入本專案位址。
 - 來源聲明：新增 `ATTRIBUTION.md`，載明衍生自 CloudPaste（Apache-2.0）、
   上游位址與本專案的四項改造；`LICENSE` 末尾同時保留兩段版權聲明。
 - 更名工具：`rename_project.py`（含 `--check / --dry-run / --apply`，內建上游連結白名單）、
@@ -273,3 +273,12 @@ files generated
   `@rollup/plugin-node-resolve`，僅建置期使用，上游尚無修正版本）。
 - `dist/` 內第三方 vendor（vditor、mobi reader）仍帶有 `zh-CN` 字串，屬套件自帶資源，
   未納入本次轉換範圍（不影響介面語言）。
+
+## 八、交付內容修正（依回饋）
+
+- `README.md` / `README_CN.md`：`YOUR_GITHUB/YOUR_REPO`（15 處）、`YOUR_DOCKERHUB`（8 處）與
+  失效的 `ling-drag0n/cloudharbor.git` clone 連結，全部改為實際倉庫 `ozuijoy/cloudharbor`；
+  Contributors / Star History / Docker Pulls 徽章同步修正（含 `/graphs` 缺少斜線的舊錯誤）。
+- 移除上游作者的贊助／收款碼區塊與 `images/PayQrcode.png`。
+- `App.vue` 的 `githubUrl`、`AdminSidebar.vue` 的 `DOC_URL` 填入本專案位址。
+- 從交付內容移除 `rename_project*.py`（3 檔）：僅為開發期一次性更名工具，非部署或執行所需。

@@ -461,7 +461,7 @@ export class DiscordStorageDriver extends BaseDriver {
         method: "GET",
         headers: {
           Authorization: `Bot ${this.botToken}`,
-          "User-Agent": "CloudHarbor-DiscordStorageDriver (https://github.com/YOUR_GITHUB/YOUR_REPO)",
+          "User-Agent": "CloudHarbor-DiscordStorageDriver (https://github.com/ozuijoy/cloudharbor)",
           Accept: "application/json",
         },
       }),
@@ -493,7 +493,7 @@ export class DiscordStorageDriver extends BaseDriver {
           method: "POST",
           headers: {
             Authorization: `Bot ${this.botToken}`,
-            "User-Agent": "CloudHarbor-DiscordStorageDriver (https://github.com/YOUR_GITHUB/YOUR_REPO)",
+            "User-Agent": "CloudHarbor-DiscordStorageDriver (https://github.com/ozuijoy/cloudharbor)",
           },
           body: form,
         };

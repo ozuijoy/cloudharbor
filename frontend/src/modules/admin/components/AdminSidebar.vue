@@ -519,7 +519,7 @@ const handleImageError = (event) => {
 
 // 常量
 // 文件站連結（新專案請改成自己的文件站）
-const DOC_URL = "";
+const DOC_URL = "https://github.com/ozuijoy/cloudharbor/blob/main/README_CN.md";
 
 // 統一側邊欄圖示：從圖示名對映到統一出口 @/components/icons 的元件
 const menuIconMap = {

@@ -5,20 +5,20 @@
 <div align="center">
     <p>
     <a href="README_CN.md">中文</a> | <a href="README.md">English</a> |
-    <a href="https://www.readme-i18n.com/YOUR_GITHUB/YOUR_REPO?lang=es">Español</a> |
-    <a href="https://www.readme-i18n.com/YOUR_GITHUB/YOUR_REPO?lang=fr">français</a> |
-    <a href="https://www.readme-i18n.com/YOUR_GITHUB/YOUR_REPO?lang=ja">日本語</a>
+    <a href="https://www.readme-i18n.com/ozuijoy/cloudharbor?lang=es">Español</a> |
+    <a href="https://www.readme-i18n.com/ozuijoy/cloudharbor?lang=fr">français</a> |
+    <a href="https://www.readme-i18n.com/ozuijoy/cloudharbor?lang=ja">日本語</a>
     </p>
     <img width="100" height="100" src="https://img.icons8.com/dusk/100/paste.png" alt="paste"/>
     <h3>🌩️ Serverless file management and Markdown sharing tool, supports multiple storage aggregation, online preview of 30+ file formats, and WebDAV mounting</h3>
 </div>
 
 <div align="center">
-    <a href="https://deepwiki.com/YOUR_GITHUB/YOUR_REPO"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+    <a href="https://deepwiki.com/ozuijoy/cloudharbor"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
     <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
-    <a href="https://github.com/YOUR_GITHUB/YOUR_REPO/stargazers"><img src="https://img.shields.io/github/stars/YOUR_GITHUB/YOUR_REPO.svg" alt="GitHub Stars"></a>
+    <a href="https://github.com/ozuijoy/cloudharbor/stargazers"><img src="https://img.shields.io/github/stars/ozuijoy/cloudharbor.svg" alt="GitHub Stars"></a>
     <a href="https://www.cloudflare.com/"><img src="https://img.shields.io/badge/Powered%20by-Cloudflare-F38020?logo=cloudflare" alt="Powered by Cloudflare"></a>
-    <a href="https://hub.docker.com/r/YOUR_DOCKERHUB/cloudharbor-backend"><img src="https://img.shields.io/docker/pulls/YOUR_DOCKERHUB/cloudharbor-backend.svg" alt="Docker Pulls"></a>
+    <a href="https://hub.docker.com/r/ozuijoy/cloudharbor-backend"><img src="https://img.shields.io/docker/pulls/ozuijoy/cloudharbor-backend.svg" alt="Docker Pulls"></a>
 </div>
 
 <p align="center">
@@ -164,7 +164,7 @@ Using GitHub Actions enables automatic deployment of your application after code
 
 #### 1️⃣ Fork or Clone Repository
 
-Visit and Fork the repository: [https://github.com/YOUR_GITHUB/YOUR_REPO](https://github.com/YOUR_GITHUB/YOUR_REPO)
+Visit and Fork the repository: [https://github.com/ozuijoy/cloudharbor](https://github.com/ozuijoy/cloudharbor)
 
 #### 2️⃣ Configure GitHub Secrets
 
@@ -412,7 +412,7 @@ Unified deployment deploys both frontend and backend to the same Cloudflare Work
 #### Step 1: Clone Repository
 
 ```bash
-git clone https://github.com/YOUR_GITHUB/YOUR_REPO.git
+git clone https://github.com/ozuijoy/cloudharbor.git
 cd CloudHarbor
 ```
 
@@ -497,7 +497,7 @@ If you need to deploy and manage frontend and backend independently, you can cho
 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_GITHUB/YOUR_REPO.git
+git clone https://github.com/ozuijoy/cloudharbor.git
 cd CloudHarbor/backend
 ```
 
@@ -573,7 +573,7 @@ cd CloudHarbor/backend
    npm run build
    ```
 
-   [Be careful when building! !](https://github.com/YOUR_GITHUB/YOUR_REPO/issues)
+   [Be careful when building! !](https://github.com/ozuijoy/cloudharbor/issues)
 
 4. Deploy to Cloudflare Pages
 
@@ -683,7 +683,7 @@ CloudHarbor backend can be quickly deployed using the official Docker image.
      -v $(pwd)/sql_data:/data \
      -e ENCRYPTION_SECRET=your-encryption-key \
      -e NODE_ENV=production \
-     YOUR_DOCKERHUB/cloudharbor-backend:latest
+     ozuijoy/cloudharbor-backend:latest
    ```
 
    Note the deployment URL (e.g., `http://your-server-ip:8787`), which will be needed for the frontend deployment.
@@ -698,7 +698,7 @@ The frontend uses Nginx to serve and configures the backend API address at start
 docker run -d --name cloudharbor-frontend \
   -p 80:80 \
   -e BACKEND_URL=http://your-server-ip:8787 \
-  YOUR_DOCKERHUB/cloudharbor-frontend:latest
+  ozuijoy/cloudharbor-frontend:latest
 ```
 
 **<span style="color:red">⚠️ Note: BACKEND_URL must include the complete URL (including protocol http:// or https://)</span>**
@@ -711,8 +711,8 @@ When a new version of the project is released, you can update your Docker deploy
 1. Pull the latest images
 
    ```bash
-   docker pull YOUR_DOCKERHUB/cloudharbor-backend:latest
-   docker pull YOUR_DOCKERHUB/cloudharbor-frontend:latest
+   docker pull ozuijoy/cloudharbor-backend:latest
+   docker pull ozuijoy/cloudharbor-frontend:latest
    ```
 
 2. Stop and remove old containers
@@ -735,7 +735,7 @@ version: "3.8"
 
 services:
   frontend:
-    image: YOUR_DOCKERHUB/cloudharbor-frontend:latest
+    image: ozuijoy/cloudharbor-frontend:latest
     environment:
       - BACKEND_URL=https://xxx.com # Fill in the backend service address
     ports:
@@ -747,7 +747,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: YOUR_DOCKERHUB/cloudharbor-backend:latest
+    image: ozuijoy/cloudharbor-backend:latest
     environment:
       - NODE_ENV=production
       - PORT=8787
@@ -1178,7 +1178,7 @@ location /dav {
 1. **Clone project repository**
 
    ```bash
-   git clone https://github.com/ling-drag0n/cloudharbor.git
+   git clone https://github.com/ozuijoy/cloudharbor.git
    cd cloudharbor
    ```
 
@@ -1356,18 +1356,8 @@ Apache License 2.0
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 ## ❤️ Contribution
-- **Sponsorship**: Maintaining the project is not easy. If you like this project, you can give the author a little encouragement. Every bit of your support is the motivation for me to move forward~
-
-  ![image.png](./images/PayQrcode.png)
-
-  <a href="https://afdian.com/a/drag0n"><img width="200" src="https://pic1.afdiancdn.com/static/img/welcome/button-sponsorme.png" alt=""></a>
-
-    - **Sponsors**: A huge thank you to the following sponsors for their support of this project!!
-
-      [![Sponsors](https://afdian.730888.xyz/image)](https://afdian.com/a/drag0n)
-
 - **Contributors**: Thanks to the following contributors for their selfless contributions to this project!
 
-  [![Contributors](https://contrib.rocks/image?repo=YOUR_GITHUB/YOUR_REPO)](https://github.com/YOUR_GITHUB/YOUR_REPOgraphs/contributors)
+  [![Contributors](https://contrib.rocks/image?repo=ozuijoy/cloudharbor)](https://github.com/ozuijoy/cloudharbor/graphs/contributors)
 
 **If you think the project is good I hope you can give a free star✨✨, Thank you very much!**

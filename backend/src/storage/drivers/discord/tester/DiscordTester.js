@@ -127,7 +127,7 @@ export async function discordTestConnection(config, encryptionSecret, _requestOr
     method: "GET",
     headers: {
       Authorization: `Bot ${botToken}`,
-      "User-Agent": "CloudHarbor-DiscordTester (https://github.com/YOUR_GITHUB/YOUR_REPO)",
+      "User-Agent": "CloudHarbor-DiscordTester (https://github.com/ozuijoy/cloudharbor)",
       Accept: "application/json",
     },
   });
@@ -197,7 +197,7 @@ export async function discordTestConnection(config, encryptionSecret, _requestOr
     method: "POST",
     headers: {
       Authorization: `Bot ${botToken}`,
-      "User-Agent": "CloudHarbor-DiscordTester (https://github.com/YOUR_GITHUB/YOUR_REPO)",
+      "User-Agent": "CloudHarbor-DiscordTester (https://github.com/ozuijoy/cloudharbor)",
       Accept: "application/json",
     },
   });

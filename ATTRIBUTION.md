@@ -27,9 +27,13 @@ CloudPaste 已停止維護，本專案在其基礎上進行了以下改造後以
 | Cloudflare 資源 | `cloudpaste-db` / `cloudpaste-spa` / `cloudpaste-frontend` / `cloudpaste-backend` | `cloudharbor-*` | 若沿用既有資源，請改回原名或先在 CF 後台改名 |
 | 資料庫 / 應用顯示名稱 | `CloudPaste` | `CloudHarbor` | 可在「站點設定」調整，`site_title` 預設值已更新 |
 
-## 仍使用第三方商標之處
+## 對外連結設定
 
-- README 徽章、GitHub/Docker 連結已改為 `YOUR_GITHUB/YOUR_REPO`、`YOUR_DOCKERHUB/...` 佔位符，
-  發佈前請自行替換。
-- `frontend/src/App.vue` 的 `githubUrl`、`AdminSidebar.vue` 的 `DOC_URL` 已清空，
-  請填入你自己的倉庫／文件站。
+- README（中／英）、Star History、Contributors 徽章、`git clone` 指令與 Discord 驅動的
+  `User-Agent` 皆指向 `https://github.com/ozuijoy/cloudharbor`。
+- Docker 映像統一為 `ozuijoy/cloudharbor-backend`、`ozuijoy/cloudharbor-frontend`；若改用其他
+  Docker Hub 帳號，請全域替換 `ozuijoy/` 並同步 `.github/workflows` 的 `DOCKERHUB_USERNAME`。
+- `frontend/src/App.vue` 的 `githubUrl` 指向本專案倉庫；`AdminSidebar.vue` 的 `DOC_URL`
+  指向本專案 `README_CN.md`，如有獨立文件站可自行替換。
+- 已移除上游作者的贊助／收款碼區塊（含 `images/PayQrcode.png`），避免與本專案混淆；
+  上游授權與版權聲明仍保留於 `LICENSE` 與本文件。
