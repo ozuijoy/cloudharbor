@@ -422,3 +422,28 @@ uploadPartBytes → uploadSingleFile
 - 後端 `node --test`：16 項全過（新增 `upload-channels.test.js` 8 項：分塊讀取、duplex 補丁、FixedLengthStream、OneDrive 130MiB 分段與 503 重試、GD Origin、308 狀態解析）。
 - `vite build` 成功；`wrangler deploy --dry-run` 打包成功。
 - 未在真實雲端帳號上實測（沙箱沒有各渠道憑證），部署後建議各渠道用 200MB 以上檔案實測一次。
+
+## 十三、分享上傳（上傳即分享）HuggingFace 大檔改為分片直傳
+
+回報的失敗來自**分享上傳頁**（`UppyShareUploader`），不是掛載目錄上傳：
+
+```
+PUT https://hf-hub-lfs-us-east-1.s3-accelerate.amazonaws.com/...&X-Amz-Expires=900&x-id=PutObject
+net::ERR_CONNECTION_RESET（重試 3 次）→ 403 Forbidden
+```
+
+- 分享上傳原本對 HuggingFace 一律「整檔單次 PUT」，第十二節的「>16MB 自動分片」只作用在掛載目錄上傳。
+- 整檔 PUT 在連線會被重置的網路上必定失敗；而且這個 URL 只有 15 分鐘效期（`X-Amz-Expires=900`），
+  大檔傳超過 15 分鐘後再重試，URL 已過期 → 403。
+
+修正：
+
+- 後端 `POST /api/share/presign` 新增 `multipart: true`：向 HF LFS batch 宣告 `["basic","multipart"]`，
+  回傳每片 presigned URL、`partSize`、`completionUrl`（HF 回 basic 時退化為單片）。
+- 後端 `POST /api/share/commit` 新增 `multipart: { completionUrl, parts }`：先呼叫 HF completionUrl 合併分片，
+  再照原流程登記到倉庫並建立分享記錄。completionUrl 只接受 HuggingFace 網域。
+- 前端分享上傳：檔案 > 16MB 自動走分片（在 sha256 計算之後預先取得分片指令），每片失敗只重送該片（至少 6 次、指數退避）；
+  上傳失敗後清掉舊的分片指令，重試時重新取得新 URL。
+- 新增後端測試 `hf-share-multipart.test.js`（3 項）。
+
+注意：如果所在網路對 `*.s3-accelerate.amazonaws.com` 連小分片也持續重置，仍會失敗，只能換網路／代理。

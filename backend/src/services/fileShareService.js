@@ -180,6 +180,7 @@ export class FileShareService {
     path = null,
     storage_config_id = null,
     sha256 = null,
+    multipart = false,
     userIdOrInfo,
     userType,
   }) {
@@ -204,6 +205,7 @@ export class FileShareService {
       fileSize,
       contentType,
       sha256,
+      multipart: multipart === true,
     });
     if (!cfg.storage_type) throw new ValidationError("儲存配置缺少 storage_type");
     // 配額校驗：考慮覆蓋同路徑時排除舊記錄體積
@@ -224,6 +226,16 @@ export class FileShareService {
       headers: presign.headers || undefined,
       sha256: presign.sha256 || (sha256 ? String(sha256) : undefined),
       skipUpload: presign.skipUpload === true ? true : undefined,
+      ...(presign.multipart
+        ? {
+            multipart: true,
+            mode: presign.mode,
+            presignedUrls: presign.presignedUrls || [],
+            partSize: presign.partSize,
+            completionUrl: presign.completionUrl || null,
+            urlTtlSeconds: presign.urlTtlSeconds || null,
+          }
+        : {}),
     };
   }
 
@@ -245,6 +257,7 @@ export class FileShareService {
     userIdOrInfo,
     userType,
     request,
+    multipart = null,
   }) {
     await this._assertSystemMaxUploadSize(Number(size));
     // 必須包含 key + storage_config_id
@@ -284,6 +297,7 @@ export class FileShareService {
       etag,
       sha256,
       contentType: mimeType,
+      multipart,
     });
 
     // 根據命名策略決定是否覆蓋更新記錄

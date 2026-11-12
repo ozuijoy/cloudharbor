@@ -84,7 +84,7 @@ export class ObjectStore {
     return await this._composeKeyWithStrategy(storageConfig, directory, filename);
   }
 
-  async presignUpload({ storage_config_id, directory, filename, fileSize, contentType, sha256 = null }) {
+  async presignUpload({ storage_config_id, directory, filename, fileSize, contentType, sha256 = null, multipart = false }) {
     const storageConfig = await this._getStorageConfig(storage_config_id);
     if (!storageConfig.storage_type) {
       throw new ValidationError("儲存配置缺少 storage_type");
@@ -92,6 +92,35 @@ export class ObjectStore {
     const driver = await StorageFactory.createDriver(storageConfig.storage_type, storageConfig, this.encryptionSecret);
 
     const key = await this._composeKeyWithStrategy(storageConfig, directory, filename);
+
+    // 分片預簽名（分享上傳的大檔）：驅動支援時回傳每片 URL，由瀏覽器分片直傳
+    if (multipart && typeof driver.generateMultipartUploadUrls === "function") {
+      const mp = await driver.generateMultipartUploadUrls(key, {
+        path: key,
+        subPath: key,
+        fileName: filename,
+        fileSize,
+        contentType,
+        sha256: sha256 || undefined,
+      });
+      return {
+        multipart: true,
+        mode: mp.mode,
+        presignedUrls: mp.presignedUrls || [],
+        partSize: mp.partSize,
+        completionUrl: mp.completionUrl || null,
+        urlTtlSeconds: mp.urlTtlSeconds || null,
+        uploadUrl: null,
+        key,
+        filename,
+        contentType: mp.contentType || contentType,
+        storage_config_id,
+        provider_type: storageConfig.provider_type,
+        sha256: mp.sha256 || sha256 || undefined,
+        skipUpload: mp.skipUpload === true ? true : undefined,
+      };
+    }
+
     if (typeof driver.generateUploadUrl !== "function" || (typeof driver.hasCapability === "function" && !driver.hasCapability(CAPABILITIES.DIRECT_LINK))) {
       throw new ValidationError("當前儲存驅動不支援預簽名上傳");
     }
@@ -214,7 +243,7 @@ export class ObjectStore {
     };
   }
 
-  async commitUpload({ storage_config_id, key, filename, size, etag, sha256 = null, contentType = null }) {
+  async commitUpload({ storage_config_id, key, filename, size, etag, sha256 = null, contentType = null, multipart = null }) {
     // 物件儲存提交階段：
     // 大部分驅動（S3 等）：無需再與雲端互動（直傳/預簽名 PUT 已完成寫入），這裡只做建檔
     // 少數驅動（HuggingFace 等）：還需要一次“登記/提交”，讓倉庫樹裡能看見檔案
@@ -230,6 +259,20 @@ export class ObjectStore {
     }
 
     const driver = await StorageFactory.createDriver(storageConfig.storage_type, storageConfig, this.encryptionSecret);
+
+    // 分片上傳：先合併分片，再做驅動的登記/提交
+    if (multipart && typeof multipart === "object" && multipart.completionUrl) {
+      if (typeof driver.completeMultipartUploadUrls !== "function") {
+        throw new ValidationError("當前儲存驅動不支援分片上傳完成");
+      }
+      await driver.completeMultipartUploadUrls(key, {
+        path: key,
+        subPath: key,
+        sha256: sha256 || undefined,
+        completionUrl: multipart.completionUrl,
+        parts: Array.isArray(multipart.parts) ? multipart.parts : [],
+      });
+    }
 
     if (typeof driver.handleUploadComplete === "function") {
       const result = await driver.handleUploadComplete(key, {

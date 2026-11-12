@@ -886,6 +886,120 @@ export class HuggingFaceDatasetsStorageDriver extends BaseDriver {
   }
 
   /**
+   * 分享上傳（無掛載）用的分片預簽名：
+   * - 以 transfers ["basic","multipart"] 向 HF LFS batch 要上傳指令，由 HF 決定 basic 或 multipart
+   * - multipart：回傳每片的 presigned URL、partSize、completionUrl，瀏覽器分片直傳（單片失敗只重送該片）
+   * - basic：退化為單片（presignedUrls 只有 1 個）
+   * - 已存在：skipUpload
+   * 原本分享上傳只能整檔單次 PUT，大檔在連線會被重置的網路上必定失敗、且重試時 URL 已過期（403）。
+   */
+  async generateMultipartUploadUrls(subPath, ctx = {}) {
+    this._ensureInitialized();
+    this._requireWriteEnabled();
+
+    const { mount = null, fileSize = 0, contentType = "application/octet-stream" } = ctx;
+    const oid = String(ctx.sha256 || ctx.oid || "").trim().toLowerCase();
+    if (!oid) {
+      throw new DriverError("HuggingFace 分片上傳需要 sha256（前端先算好再請求）", {
+        status: ApiStatus.BAD_REQUEST,
+        code: "DRIVER_ERROR.HUGGINGFACE_PRESIGN_MISSING_SHA256",
+        expose: true,
+      });
+    }
+    const size = Number(fileSize);
+    if (!Number.isFinite(size) || size < 0) {
+      throw new DriverError("HuggingFace 分片上傳失敗：檔案大小無效", {
+        status: ApiStatus.BAD_REQUEST,
+        code: "DRIVER_ERROR.HUGGINGFACE_PRESIGN_INVALID_SIZE",
+        expose: true,
+      });
+    }
+    const normalizedSubPath = normalizeSubPath(subPath || "/", { asDirectory: false });
+    const repoRelPath = this._toRepoRelPathFromSubPath(normalizedSubPath, { asDirectory: false, mount });
+    if (!repoRelPath) {
+      throw new DriverError("HuggingFace 分片上傳失敗：目標路徑無效", {
+        status: ApiStatus.BAD_REQUEST,
+        code: "DRIVER_ERROR.HUGGINGFACE_INVALID_PATH",
+        expose: true,
+      });
+    }
+
+    const instructions = await fetchHfLfsUploadInstructions(this, { oid, size });
+    const skipUpload = instructions.mode === "already_uploaded";
+    let presignedUrls = [];
+    if (instructions.mode === "multipart") {
+      presignedUrls = instructions.presignedUrls || [];
+    } else if (!skipUpload && instructions.uploadUrl) {
+      presignedUrls = [{ partNumber: 1, url: instructions.uploadUrl }];
+    }
+    if (!skipUpload && presignedUrls.length === 0) {
+      throw new DriverError("HuggingFace 分片上傳失敗：上游沒有返回上傳 URL", {
+        status: ApiStatus.BAD_GATEWAY,
+        code: "DRIVER_ERROR.HUGGINGFACE_PRESIGN_NO_UPLOAD_URL",
+        expose: true,
+      });
+    }
+    const urlTtlSeconds = skipUpload ? null : tryParseAmzExpiresSeconds(String(presignedUrls?.[0]?.url || ""));
+
+    return {
+      success: true,
+      mode: instructions.mode,
+      presignedUrls,
+      partSize: instructions.mode === "multipart" ? instructions.partSize : Math.max(1, size),
+      completionUrl: instructions.mode === "multipart" ? instructions.completionUrl || null : null,
+      urlTtlSeconds: urlTtlSeconds || null,
+      contentType,
+      storagePath: repoRelPath,
+      sha256: oid,
+      skipUpload,
+    };
+  }
+
+  /**
+   * 分享上傳的分片完成：呼叫 HF completionUrl 合併分片（之後再由 handleUploadComplete 登記到倉庫）
+   * completionUrl 由前端帶回，只允許 HF 自己的網域，避免被拿來打任意 URL。
+   */
+  async completeMultipartUploadUrls(_subPath, ctx = {}) {
+    this._ensureInitialized();
+    this._requireWriteEnabled();
+    const oid = String(ctx.sha256 || ctx.oid || "").trim().toLowerCase();
+    const completionUrl = String(ctx.completionUrl || "").trim();
+    if (!completionUrl) return { success: true, skipped: true };
+
+    let host = "";
+    try {
+      host = new URL(completionUrl).hostname.toLowerCase();
+    } catch {
+      host = "";
+    }
+    let endpointHost = "";
+    try {
+      endpointHost = new URL(this._endpointBase || "https://huggingface.co").hostname.toLowerCase();
+    } catch {}
+    const allowed =
+      !!host &&
+      (host === endpointHost ||
+        host === "huggingface.co" ||
+        host.endsWith(".huggingface.co") ||
+        host === "hf.co" ||
+        host.endsWith(".hf.co"));
+    if (!allowed || !completionUrl.startsWith("https://")) {
+      throw new DriverError("HuggingFace 分片完成失敗：completionUrl 不是 HuggingFace 網域", {
+        status: ApiStatus.BAD_REQUEST,
+        code: "DRIVER_ERROR.HUGGINGFACE_MULTIPART_INVALID_COMPLETION_URL",
+        expose: true,
+      });
+    }
+
+    const parts = (Array.isArray(ctx.parts) ? ctx.parts : [])
+      .map((p) => ({ partNumber: Number(p?.partNumber ?? p?.PartNumber), etag: p?.etag ?? p?.ETag ?? null }))
+      .filter((p) => Number.isFinite(p.partNumber) && p.partNumber > 0 && typeof p.etag === "string" && p.etag)
+      .sort((a, b) => a.partNumber - b.partNumber);
+    await completeHfLfsMultipartUpload({ completionUrl, oid, parts });
+    return { success: true };
+  }
+
+  /**
    * 預簽名上傳完成後的“登記/提交”
    *
    */

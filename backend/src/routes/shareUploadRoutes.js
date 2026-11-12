@@ -265,7 +265,7 @@ router.post("/api/share/presign", requireFilesCreate, async (c) => {
   const { type: userType, userId, apiKeyInfo } = principalInfo;
   const userIdOrInfo = userType === UserType.ADMIN ? userId : apiKeyInfo;
 
-  const { filename, fileSize, contentType, path, storage_config_id, sha256 } = body || {};
+  const { filename, fileSize, contentType, path, storage_config_id, sha256, multipart } = body || {};
   if (!filename) {
     throw new ValidationError("缺少 filename");
   }
@@ -279,6 +279,7 @@ router.post("/api/share/presign", requireFilesCreate, async (c) => {
     path: path || null,
     storage_config_id: storage_config_id || null,
     sha256: sha256 || null,
+    multipart: multipart === true,
     userIdOrInfo,
     userType,
   });
@@ -297,7 +298,7 @@ router.post("/api/share/commit", requireFilesCreate, async (c) => {
   const { type: userType, userId, apiKeyInfo } = principalInfo;
   const userIdOrInfo = userType === UserType.ADMIN ? userId : apiKeyInfo;
 
-  const { key, storage_config_id, filename, size, etag, sha256, slug, remark, password, expires_in, max_views, use_proxy, original_filename } =
+  const { key, storage_config_id, filename, size, etag, sha256, slug, remark, password, expires_in, max_views, use_proxy, original_filename, multipart } =
     body || {};
   if (!filename) {
     throw new ValidationError("缺少 filename");
@@ -329,6 +330,7 @@ router.post("/api/share/commit", requireFilesCreate, async (c) => {
     userIdOrInfo,
     userType,
     request: c.req.raw,
+    multipart: multipart && typeof multipart === "object" ? multipart : null,
   });
 
   return jsonOk(c, result, "預簽名上傳提交成功");

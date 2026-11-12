@@ -139,13 +139,148 @@ export class HuggingFaceDatasetsDriver extends LocalDriver {
       uppy.use(Sha256PreprocessPlugin, shaOpts);
     }
 
-    // 複用 StorageAdapter 的 uploadSingleFile（內部用 XHR，且支援 skipUpload）
+    // 複用 StorageAdapter 的 uploadPartBytes（內部用 XHR，含重試、skipUpload）
     const adapter = new StorageAdapter("/", uppy);
+
+    // ===== 大檔分片（修正：分享上傳原本只能整檔單次 PUT）=====
+    // 整檔一次 PUT 到 hf-hub-lfs-*.s3-accelerate.amazonaws.com，在連線會被重置的網路上必定失敗，
+    // 而且 URL 只有 15 分鐘效期，重試時已過期（403）。超過門檻改向後端要 HF multipart 指令，逐片直傳。
+    const SHARE_MULTIPART_THRESHOLD = 16 * 1024 * 1024;
+    const isLargeFile = (file) => Number(file?.size || file?.data?.size || 0) > SHARE_MULTIPART_THRESHOLD;
+    const resolveFileName = (file) => {
+      const meta = file?.meta || {};
+      return typeof meta?.name === "string" && meta.name ? meta.name : file.name;
+    };
+    const resolveSha256 = async (file) => {
+      const meta = file?.meta || {};
+      if (typeof meta?.cloudharborSha256 === "string" && meta.cloudharborSha256) return meta.cloudharborSha256;
+      if (typeof meta?.sha256 === "string" && meta.sha256) return meta.sha256;
+      const blob = file?.data instanceof Blob ? file.data : null;
+      return blob ? await sha256HexFromBlob(blob) : null;
+    };
+
+    // 前處理器：在 AwsS3 切片前拿到 HF 的 partSize 與每片 URL（必須排在 sha256 計算之後）
+    const sharePreinit = async (fileIDs = []) => {
+      for (const fileID of fileIDs || []) {
+        const file = uppy.getFile(fileID);
+        if (!file || !isLargeFile(file)) continue;
+        if (file.meta?.cloudharborShareMp) continue;
+        const sha256 = await resolveSha256(file);
+        if (!sha256) throw new Error("HuggingFace 分片上傳需要 sha256，但當前檔案無法計算 sha256");
+        const meta = file.meta || {};
+        const fileName = resolveFileName(file);
+        try {
+          uppy.emit("preprocess-progress", file, { mode: "indeterminate", message: "初始化分片上傳...", value: 0 });
+        } catch {}
+        let presign;
+        try {
+          presign = await api.file.getUploadPresignedUrl({
+            storage_config_id: basePayload.storage_config_id,
+            filename: fileName,
+            mimetype: file.type || "application/octet-stream",
+            path: meta.path ?? basePayload.path,
+            size: file.size,
+            sha256,
+            multipart: true,
+          });
+        } finally {
+          try {
+            uppy.emit("preprocess-complete", file);
+          } catch {}
+        }
+        if (!presign?.success || !presign?.data) {
+          throw new Error(presign?.message || "獲取分片上傳 URL 失敗");
+        }
+        const data = presign.data || {};
+        const skipUpload = data.skipUpload === true;
+        const partSize = Number(data.partSize) > 0 ? Math.floor(Number(data.partSize)) : file.size;
+        uppy.setFileMeta(file.id, {
+          key: data.key,
+          storage_config_id: data.storage_config_id || basePayload.storage_config_id,
+          filename: typeof data.filename === "string" && data.filename ? data.filename : fileName,
+          path: meta.path ?? basePayload.path,
+          slug: meta.slug ?? basePayload.slug,
+          password: basePayload.password || meta.password || null,
+          expires_in: basePayload.expires_in,
+          max_views: basePayload.max_views,
+          sha256: typeof data.sha256 === "string" && data.sha256 ? data.sha256 : sha256,
+          skipUpload,
+          cloudharborMultipartChunkSize: skipUpload ? file.size : partSize,
+          cloudharborShareMp: {
+            mode: data.mode || "multipart",
+            presignedUrls: Array.isArray(data.presignedUrls) ? data.presignedUrls : [],
+            completionUrl: data.completionUrl || null,
+          },
+        });
+      }
+    };
+    // 同一個 Uppy 可能多次建立分享會話：先移除舊的前處理器（舊閉包帶著上一次的 slug/密碼等設定）
+    if (uppy.__cloudharborHfSharePreinit) {
+      try {
+        uppy.removePreProcessor(uppy.__cloudharborHfSharePreinit);
+      } catch {}
+    }
+    uppy.__cloudharborHfSharePreinit = sharePreinit;
+    uppy.addPreProcessor(sharePreinit);
+    // 上傳失敗後清掉分片指令，重試時重新向 HF 要新的（舊 URL 可能已過期）
+    if (!uppy.__cloudharborHfShareErrorHooked) {
+      uppy.__cloudharborHfShareErrorHooked = true;
+      uppy.on("upload-error", (file) => {
+        try {
+          if (file?.id && uppy.getFile(file.id)) {
+            uppy.setFileMeta(file.id, { cloudharborShareMp: null, cloudharborShareParts: null });
+          }
+        } catch {}
+      });
+    }
 
     uppy.use(AwsS3, {
       id: pluginId,
-      shouldUseMultipart: () => false,
-      limit: 3,
+      shouldUseMultipart: (file) => isLargeFile(file),
+      getChunkSize: (data) => adapter.getChunkSizeForAwsS3(data),
+      limit: Number(this.config?.hf_multipart_concurrency) > 0 ? Math.floor(Number(this.config.hf_multipart_concurrency)) : 4,
+      createMultipartUpload: async (file) => {
+        const f = uppy.getFile(file.id) || file;
+        if (!f?.meta?.cloudharborShareMp) await sharePreinit([file.id]);
+        const latest = uppy.getFile(file.id) || f;
+        return { uploadId: `hf-share-${file.id}`, key: latest?.meta?.key || "" };
+      },
+      signPart: async (file, { partNumber }) => {
+        const latest = uppy.getFile(file.id) || file;
+        const meta = latest?.meta || {};
+        if (meta.skipUpload === true) {
+          return {
+            url: `${API_BASE_URL}/__uppy_skip_upload__`,
+            headers: { "x-cloudharbor-skip-upload": "1" },
+            skipUpload: true,
+            partNumber,
+            fileId: file.id,
+          };
+        }
+        const urls = meta?.cloudharborShareMp?.presignedUrls || [];
+        const hit = urls.find((u) => Number(u?.partNumber) === Number(partNumber));
+        if (!hit?.url) {
+          throw new Error(`找不到分片 ${partNumber} 的上傳 URL（HF 共回傳 ${urls.length} 片）`);
+        }
+        return {
+          url: hit.url,
+          headers: { "Content-Type": "application/octet-stream" },
+          partNumber,
+          fileId: file.id,
+        };
+      },
+      uploadPartBytes: adapter.uploadPartBytes.bind(adapter),
+      listParts: async () => [],
+      abortMultipartUpload: async () => {},
+      completeMultipartUpload: async (file, { parts }) => {
+        const normalized = (Array.isArray(parts) ? parts : [])
+          .map((p) => ({ partNumber: Number(p?.PartNumber ?? p?.partNumber), etag: p?.ETag ?? p?.etag ?? null }))
+          .filter((p) => Number.isFinite(p.partNumber) && p.partNumber > 0);
+        try {
+          uppy.setFileMeta(file.id, { cloudharborShareParts: normalized });
+        } catch {}
+        return { location: "" };
+      },
       getUploadParameters: async (file) => {
         const meta = file?.meta || {};
         // 檔名取值順序：
@@ -217,7 +352,6 @@ export class HuggingFaceDatasetsDriver extends LocalDriver {
           skipUpload,
         };
       },
-      uploadPartBytes: adapter.uploadSingleFile.bind(adapter),
     });
 
     // 成功後執行 commit（建立分享記錄 + HF 倉庫登記）
@@ -244,6 +378,17 @@ export class HuggingFaceDatasetsDriver extends LocalDriver {
           use_proxy: basePayload.use_proxy,
           original_filename: basePayload.original_filename ?? false,
           path: meta.path,
+          // 分片上傳：後端先呼叫 HF completionUrl 合併分片，再登記到倉庫
+          ...(meta?.cloudharborShareMp?.mode === "multipart" &&
+          meta?.cloudharborShareMp?.completionUrl &&
+          meta.skipUpload !== true
+            ? {
+                multipart: {
+                  completionUrl: meta.cloudharborShareMp.completionUrl,
+                  parts: Array.isArray(meta.cloudharborShareParts) ? meta.cloudharborShareParts : [],
+                },
+              }
+            : {}),
         });
 
         if (commitRes?.data) {

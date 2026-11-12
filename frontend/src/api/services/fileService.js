@@ -30,6 +30,7 @@ export async function getUploadPresignedUrl(options) {
       path: options.path || null,
       storage_config_id: options.storage_config_id || null,
       sha256,
+      ...(options?.multipart === true ? { multipart: true } : {}),
     };
 
     return await post("share/presign", data);
@@ -64,6 +65,7 @@ export async function completeFileUpload(data) {
     max_views: data.max_views ?? data.maxViews,
     use_proxy: data.use_proxy ?? data.useProxy,
     original_filename: data.original_filename ?? data.originalFilename ?? false,
+    ...(data.multipart && typeof data.multipart === "object" ? { multipart: data.multipart } : {}),
   };
 
   return await post("share/commit", payload);
