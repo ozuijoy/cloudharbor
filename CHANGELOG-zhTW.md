@@ -353,3 +353,26 @@ files generated
 
 **驗證**：後端 4 個改動檔 `node --check` 全過；`frontend` `vitest run` 10 項全過；
 HuggingFace 以 mock 服務端到端（LFS batch → 分片 PUT → complete → commit）驗證分片流程正常。
+
+### 11.5 大檔自動切換分片（修正 ERR_CONNECTION_RESET）
+
+實際抓到的失敗請求為：
+
+```
+PUT https://hf-hub-lfs-us-east-1.s3-accelerate.amazonaws.com/repos/...&x-id=PutObject
+net::ERR_CONNECTION_RESET
+uploadPartBytes → uploadSingleFile
+```
+
+`uploadSingleFile` 表示當時走的是「整檔一次 PUT」（presigned 單次上傳），不是分片。
+`hf-hub-lfs-us-east-1.s3-accelerate.amazonaws.com` 在多數中國大陸／受限網路的連線上，
+大檔案長時間上傳會被中間設備重置；一旦重置，單次 PUT 就是整檔白傳。
+
+修正（`UppyUploadModal.vue`）：
+
+- 上傳開始前檢查檔案大小，**超過 16MB 且驅動支援分片時，自動切換為分片上傳（直連）**；
+  分片把大檔切成小請求，單片失敗只重試該片，不必整檔重來。
+- 分片重試加入退避（800ms × 次數），避免連線被重置後立刻重試又被打斷。
+
+**注意**：這是網路層限制，程式只能降低失敗機率（小分片 + 重試 + 續傳）；
+若該網路對 `*.s3-accelerate.amazonaws.com` 直接封鎖，仍需要換網路或改用支援中轉的部署。

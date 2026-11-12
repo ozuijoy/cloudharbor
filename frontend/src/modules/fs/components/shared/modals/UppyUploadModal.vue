@@ -456,6 +456,9 @@ const getServerResumeConfig = () => ({
   cacheExpiry: fsAdapterHandle?.adapter?.config?.cacheExpiry || 24 * 60 * 60 * 1000,
 });
 
+// 超過此大小就強制使用分片上傳（整檔單次 PUT 在部分網路必被重置）
+const LARGE_FILE_MULTIPART_THRESHOLD = 16 * 1024 * 1024;
+
 const strategyMap = {
   stream: STORAGE_STRATEGIES.BACKEND_STREAM, // 流式直傳：PUT /fs/upload
   form: STORAGE_STRATEGIES.BACKEND_FORM,     // 表單上傳：POST /fs/upload
@@ -801,6 +804,27 @@ const startUpload = async () => {
       enforceUploadMethodByDriver(driver);
     } catch (e) {
       log.warn("[Uppy] startUpload 驅動解析失敗", e);
+    }
+
+    // 大檔一律走分片（S3/HuggingFace 的「整檔一次 PUT」在部分網路會被重置成
+    // net::ERR_CONNECTION_RESET，而且失敗就整檔重來；分片可以把風險切小並逐片重試）
+    try {
+      const files = uppyInstance.value?.getFiles?.() || [];
+      const oversizedFile = files.find((file) => {
+        const size = Number(file?.size || file?.data?.size || 0);
+        return size > LARGE_FILE_MULTIPART_THRESHOLD;
+      });
+      if (oversizedFile && uploadMethod.value !== "multipart" && canUseMultipart.value) {
+        log.info(
+          `[Uppy] 檔案 ${oversizedFile.name} 大小 ${Math.round((oversizedFile.size || 0) / 1024 / 1024)}MB 超過 ` +
+            `${Math.round(LARGE_FILE_MULTIPART_THRESHOLD / 1024 / 1024)}MB，自動切換為分片上傳（直連）`,
+        );
+        uploadMethod.value = "multipart";
+        await configureUploadMethod();
+        driverStrategy.value = STORAGE_STRATEGIES.PRESIGNED_MULTIPART;
+      }
+    } catch (e) {
+      log.warn("[Uppy] 自動切換分片上傳失敗（忽略）", e);
     }
 
     driverStrategy.value = strategyMap[uploadMethod.value] || STORAGE_STRATEGIES.BACKEND_STREAM;

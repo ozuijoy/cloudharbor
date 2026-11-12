@@ -552,9 +552,12 @@ export async function uploadPartBytes({ signature, body, onComplete, size, onPro
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         if (attempt > 1) {
+          // 連線被重置後立刻重試容易再次被重置，加入短暫退避
+          const backoffMs = 800 * (attempt - 1);
           log.warn(
-            `[StorageAdapter] ⚠️ 分片${partNumber ?? "?"}重試上傳 attempt=${attempt}/${maxAttempts}`,
+            `[StorageAdapter] ⚠️ 分片${partNumber ?? "?"}重試上傳 attempt=${attempt}/${maxAttempts}（退避 ${backoffMs}ms）`,
           );
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
         }
         return await uploadOnce(currentUrl);
       } catch (err) {
