@@ -445,6 +445,55 @@ export const registerMultipartRoutes = (router, helpers) => {
     );
   });
 
+  // 分片中轉端點（per_part_url 場景，目前用於 HuggingFace）
+  // 瀏覽器把分片位元組送給本後端，由後端 PUT 到上游預簽名 URL，回傳上游 ETag。
+  // 目的：避免瀏覽器直連外部分片儲存域名時的 CORS / 連線重置（ERR_CONNECTION_RESET）。
+  router.put("/api/fs/multipart/relay-part", usePolicy("fs.upload", { pathCheck: false }), async (c) => {
+    const { db, encryptionSecret, repositoryFactory, userIdOrInfo, userType } = requireUserContext(c);
+
+    const uploadId = c.req.query("upload_id");
+    const partNumberRaw = c.req.query("part_number");
+    const partNumber = Number.parseInt(String(partNumberRaw || ""), 10);
+
+    if (!uploadId) {
+      throw new ValidationError("缺少 upload_id 引數");
+    }
+    if (!Number.isFinite(partNumber) || partNumber <= 0) {
+      throw new ValidationError("缺少或無效的 part_number 引數");
+    }
+
+    const sessionRow = await findUploadSessionById(db, { id: uploadId });
+    assertUploadSessionOwnedByUser(sessionRow, userIdOrInfo, userType);
+
+    const contentLength = Number.parseInt(c.req.header("content-length") || "0", 10) || 0;
+    const stream = c.req.raw?.body || null;
+    // 有 Content-Length 時直接流式轉發（避免大分片整塊讀進記憶體），否則退回一次讀完
+    const hasStream = !!stream && contentLength > 0;
+    const payload = hasStream ? stream : Buffer.from(await c.req.arrayBuffer());
+    if (!hasStream && payload.length === 0) {
+      throw new ValidationError("分片內容為空");
+    }
+
+    const mountManager = new MountManager(db, encryptionSecret, repositoryFactory, { env: c.env });
+    const fileSystem = new FileSystem(mountManager);
+
+    const result = await fileSystem.relayMultipartPart(
+      sessionRow?.fs_path || "/",
+      uploadId,
+      partNumber,
+      payload,
+      userIdOrInfo,
+      userType,
+      { contentLength: hasStream ? contentLength : payload.length },
+    );
+
+    // 把上游 ETag 原樣回給瀏覽器（Uppy 需要它來完成分片上傳）
+    return c.body(null, 200, {
+      ...(result?.etag ? { ETag: String(result.etag) } : {}),
+      "X-CloudHarbor-Relayed": "1",
+    });
+  });
+
   // =====================================================================
   // == FS 預簽名直傳（單檔案）：/presign + /presign/commit（非分片）     ==
   // =====================================================================

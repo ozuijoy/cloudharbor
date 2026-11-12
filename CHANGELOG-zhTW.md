@@ -311,3 +311,31 @@ files generated
 - `UppyPluginManager.js` 的註解用語改寫，不再出現 `zh-CN` 字樣。
 - 後端新增 `test/utils.test.js`（8 項，涵蓋 `utils/common.js` 與 `http/errors.js`），
   `npm test` 從「0 個測試」變成可實際驗證。
+
+## 十一、HuggingFace 大檔上傳修正（直連優先）
+
+**現象**：HuggingFace Datasets 上傳小檔（約 19MB）成功，大檔在分片上傳階段失敗，
+瀏覽器顯示 `uploadPartBytes失敗: Error: Upload failed` 與 `net::ERR_CONNECTION_RESET`。
+
+**原因**：小檔走 HF 的 LFS `basic`（整檔一次 PUT），大檔則由 HF 回傳 `multipart` 分片指令，
+瀏覽器改為直連 HF 的分片儲存域名（與 basic 不同主機）。這條連線在部分網路環境／
+Cloudflare 邊緣節點上會被重置（`ERR_CONNECTION_RESET`），因此永遠無法完成分片。
+
+**修正（全部維持直連，不經後端／Workers 中轉）**：
+
+1. HF LFS 上傳預設只宣告 `transfers: ["basic"]`，不再向 HF 要求 multipart
+   → 大檔與小檔都走同一條「瀏覽器直連 HF 的一次性 PUT」路線（實測可用的那條）。
+   程式位置：`backend/src/storage/drivers/huggingface-datasets/hfMultipartOps.js`。
+2. 檔案超過 5GB（S3 單次 PUT 上限）時自動仍要求 multipart，避免無法上傳。
+3. 需要斷點續傳時可選擇開啟分片（仍為直連）：儲存設定 `hf_lfs_multipart: true`
+   或環境變數 `HF_LFS_MULTIPART=1`。
+4. 後端保留 `/api/fs/multipart/relay-part` 中轉端點，但**預設關閉**；僅在明確設定
+   `hf_multipart_relay: true` 或 `HF_MULTIPART_RELAY=1` 時啟用（適用無法直連的自架環境）。
+   Cloudflare Workers 因請求大小與 CPU 限制，不建議開啟。
+5. 前端分片失敗訊息改為附帶目標主機名（`Upload failed (host)`）；遇到沒有 HTTP 狀態碼的
+   網路層失敗（連線重置）時會重新簽名後重試，而不是用同一個失效 URL 連試三次。
+
+**驗證**：以 mock HuggingFace（LFS batch + 分片／整檔 PUT + complete + commit）端到端測試：
+- 預設模式：12MB 檔 → 1 個分片、直接 PUT 到上游 URL、ETag 正確、complete 成功。
+- `HF_LFS_MULTIPART=1`：12MB 檔 → 3 個 5MB 分片，URL 仍為上游絕對位址（無中轉）、complete 成功。
+- `frontend` `vitest run`：10 項全數通過。

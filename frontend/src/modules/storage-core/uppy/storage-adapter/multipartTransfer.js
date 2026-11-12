@@ -200,12 +200,18 @@ export async function signPart(file, partData) {
       throw new Error(`找不到分片 ${partData.partNumber} 的預簽名URL。${hint}`);
     }
 
+    // 後端中轉分片（例如 HuggingFace）：URL 指向本站 API，需要帶上登入憑證
+    const requiresAuth = urlInfo?.requiresAuth === true || urlInfo?.requires_auth === true;
+    const relayAuthHeaders = requiresAuth ? (this.authProvider.getAuthHeaders() || {}) : {};
+
     return {
       url: resolveAbsoluteApiUrl(urlInfo.url),
       headers: {
+        ...relayAuthHeaders,
         "Content-Type": "application/octet-stream",
         ...(session?.skipUpload === true ? { "x-cloudharbor-skip-upload": "1" } : {}),
       },
+      requiresAuth,
       strategy: "per_part_url",
       partNumber: partData.partNumber,
       fileId: file.id,
@@ -404,6 +410,8 @@ export async function uploadPartBytes({ signature, body, onComplete, size, onPro
       new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open("PUT", uploadUrl, true);
+        // 供錯誤訊息顯示目標主機（診斷外部儲存連線被重置用）
+        xhr.__cloudharborUrl = uploadUrl;
 
         if (headers) {
           Object.keys(headers).forEach((key) => {
@@ -509,7 +517,12 @@ export async function uploadPartBytes({ signature, body, onComplete, size, onPro
 
         xhr.addEventListener("error", (ev) => {
           cleanup();
-          const error = new Error("Upload failed");
+          // 帶上目標主機名，方便判斷是不是外部分片存儲域名被重置（ERR_CONNECTION_RESET）
+          let host = "";
+          try {
+            host = new URL(xhr.__cloudharborUrl || "", window.location.href).host;
+          } catch {}
+          const error = new Error(host ? `Upload failed (${host})` : "Upload failed");
           error.source = ev.target;
           reject(error);
         });
@@ -565,7 +578,10 @@ export async function uploadPartBytes({ signature, body, onComplete, size, onPro
           !isSingleSession &&
           (status === 401 ||
             status === 403 ||
-            (status === 400 && /expired|signature|token|Request has expired/i.test(responseText)));
+            (status === 400 && /expired|signature|token|Request has expired/i.test(responseText)) ||
+            // 網路層失敗（ERR_CONNECTION_RESET / 連線中斷）沒有 HTTP 狀態碼：
+            // 常見於預簽名 URL 失效、或外部儲存域名連線被重置，重新簽名後再試一次
+            status == null);
 
         // 只有“可能是預簽名過期”才嘗試重新簽名
         if (!mayBeExpiredSignature || attempt >= maxAttempts) {

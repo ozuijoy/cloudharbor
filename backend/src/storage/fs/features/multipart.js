@@ -143,4 +143,35 @@ export async function signMultipartParts(fs, path, uploadId, partNumbers, userId
   });
 }
 
+/**
+ * 分片中轉：把前端送來的一個分片，交給驅動轉發到上游（用於 HuggingFace 等直連不穩定的儲存）
+ */
+export async function relayMultipartPart(fs, path, uploadId, partNumber, body, userIdOrInfo, userType, options = {}) {
+  const { driver, mount, subPath } = await fs.mountManager.getDriverByPath(path, userIdOrInfo, userType);
+
+  if (!driver.hasCapability(CAPABILITIES.MULTIPART)) {
+    throw new DriverError(`儲存驅動 ${driver.getType()} 不支援分片上傳`, {
+      status: ApiStatus.NOT_IMPLEMENTED,
+      code: "DRIVER_ERROR.NOT_IMPLEMENTED",
+      expose: true,
+    });
+  }
+  if (typeof driver.relayMultipartPart !== "function") {
+    throw new DriverError(`儲存驅動 ${driver.getType()} 不支援分片中轉`, {
+      status: ApiStatus.NOT_IMPLEMENTED,
+      code: "DRIVER_ERROR.NOT_IMPLEMENTED",
+      expose: true,
+    });
+  }
+
+  return await driver.relayMultipartPart(subPath, uploadId, partNumber, body, {
+    subPath,
+    mount,
+    db: fs.mountManager.db,
+    userIdOrInfo,
+    userType,
+    ...options,
+  });
+}
+
 

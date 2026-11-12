@@ -27,6 +27,7 @@ import {
   listMultipartUploads as featureListMultipartUploads,
   listMultipartParts as featureListMultipartParts,
   signMultipartParts as featureSignMultipartParts,
+  relayMultipartPart as featureRelayMultipartPart,
 } from "./features/multipart.js";
 import cacheBus, { CACHE_EVENTS } from "../../cache/cacheBus.js";
 import { ensureRepositoryFactory } from "../../utils/repositories.js";
@@ -326,6 +327,17 @@ export class FileSystem {
    */
   async signMultipartParts(path, uploadId, partNumbers, userIdOrInfo, userType, options = {}) {
     return await featureSignMultipartParts(this, path, uploadId, partNumbers, userIdOrInfo, userType, options);
+  }
+
+  /**
+   * 分片中轉：由後端把單一分片轉發到上游儲存（HuggingFace 等）
+   * @param {string} path - 目標路徑
+   * @param {string} uploadId - 上傳會話ID
+   * @param {number} partNumber - 分片編號
+   * @param {ArrayBuffer|Buffer} body - 分片位元組
+   */
+  async relayMultipartPart(path, uploadId, partNumber, body, userIdOrInfo, userType, options = {}) {
+    return await featureRelayMultipartPart(this, path, uploadId, partNumber, body, userIdOrInfo, userType, options);
   }
 
   /**
