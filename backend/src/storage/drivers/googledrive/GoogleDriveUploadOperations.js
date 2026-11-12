@@ -190,13 +190,21 @@ export class GoogleDriveUploadOperations {
       });
     }
 
-    // 前端上傳端點：透過該 URL 將分片傳給後端，再由後端轉發到 Google Drive
-    const sessionUploadUrl = `/api/fs/multipart/upload-chunk?upload_id=${encodeURIComponent(
+    // 上傳通道：預設 direct（瀏覽器直連 Google 的 resumable session URL，不經後端）
+    // 只有 storage config 明確設定 upload_channel="proxy" 時才走後端中轉
+    const uploadChannel = String(
+      this.driver?.config?.upload_channel || process.env.GD_UPLOAD_CHANNEL || "direct",
+    ).toLowerCase();
+    const isDirectUpload = uploadChannel !== "proxy";
+
+    // proxy 模式：把分片送給後端，由後端轉發到 Google Drive
+    const proxyUploadUrl = `/api/fs/multipart/upload-chunk?upload_id=${encodeURIComponent(
       uploadId,
     )}`;
+    const sessionUploadUrl = isDirectUpload ? uploadUrl : proxyUploadUrl;
 
     console.log(
-      `[StorageUpload] type=GOOGLE_DRIVE mode=前端分片-single_session status=初始化完成 路徑=${fsPath} 檔案=${fileName} 大小=${fileSize} uploadId=${uploadId}`,
+      `[StorageUpload] type=GOOGLE_DRIVE mode=前端分片-${isDirectUpload ? "direct" : "proxy"} status=初始化完成 路徑=${fsPath} 檔案=${fileName} 大小=${fileSize} uploadId=${uploadId}`,
     );
 
     return {
@@ -212,6 +220,7 @@ export class GoogleDriveUploadOperations {
       session: {
         uploadUrl: sessionUploadUrl,
         providerUploadUrl: uploadUrl,
+        channel: isDirectUpload ? "direct" : "proxy",
       },
       policy: {
         refreshPolicy: "server_decides",
@@ -757,12 +766,26 @@ export class GoogleDriveUploadOperations {
 
     const nextRanges = nextExpectedRange ? [String(nextExpectedRange)] : [];
 
+    // 續傳時保持與初始化一致的通道：預設直連（Google resumable URL），proxy 模式才走後端
+    const refreshChannel = String(
+      this.driver?.config?.upload_channel || process.env.GD_UPLOAD_CHANNEL || "direct",
+    ).toLowerCase();
+    const refreshDirectUrl = sessionRow?.provider_upload_url
+      ? String(sessionRow.provider_upload_url)
+      : null;
+    const refreshUploadUrl =
+      refreshChannel !== "proxy" && refreshDirectUrl
+        ? refreshDirectUrl
+        : `/api/fs/multipart/upload-chunk?upload_id=${encodeURIComponent(uploadId)}`;
+
     const result = {
       success: true,
       uploadId: String(uploadId),
       strategy: "single_session",
       session: {
-        uploadUrl: `/api/fs/multipart/upload-chunk?upload_id=${encodeURIComponent(uploadId)}`,
+        uploadUrl: refreshUploadUrl,
+        providerUploadUrl: refreshDirectUrl,
+        channel: refreshChannel !== "proxy" && refreshDirectUrl ? "direct" : "proxy",
         nextExpectedRanges: nextRanges,
       },
       policy: {

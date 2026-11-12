@@ -122,16 +122,10 @@ export async function fetchHfLfsUploadInstructions(driver, { oid, size } = {}) {
     repoDesignation: driver._getHubRepoDesignation(),
   });
 
-  // S3 basic（單次 PUT）上限 5GB，超過就必須走 multipart
-  const exceedsBasicSinglePut = Number.isFinite(s) && s > 5 * 1024 * 1024 * 1024;
-  const wantMultipart = driver?._useLfsMultipart === true || exceedsBasicSinglePut;
-
   /** @type {any} */
   const payload = {
     operation: "upload",
-    // 預設只要求 basic（整檔一次 PUT，瀏覽器直連 HF）
-    // 只有明確開啟 hf_lfs_multipart（或檔案 >5GB）時才要求 multipart（分片直連）
-    transfers: wantMultipart ? ["basic", "multipart"] : ["basic"],
+    transfers: ["basic", "multipart"],
     hash_algo: "sha_256",
     objects: [{ oid: o, size: s }],
   };

@@ -312,30 +312,44 @@ files generated
 - 後端新增 `test/utils.test.js`（8 項，涵蓋 `utils/common.js` 與 `http/errors.js`），
   `npm test` 從「0 個測試」變成可實際驗證。
 
-## 十一、HuggingFace 大檔上傳修正（直連優先）
+## 十一、上傳通道全面改為「能直連就直連」
 
-**現象**：HuggingFace Datasets 上傳小檔（約 19MB）成功，大檔在分片上傳階段失敗，
-瀏覽器顯示 `uploadPartBytes失敗: Error: Upload failed` 與 `net::ERR_CONNECTION_RESET`。
+**原則**：HuggingFace、OneDrive、Google Drive、S3 四個渠道預設由瀏覽器直連雲端供應商，
+不經 Cloudflare Workers／後端中轉（Workers 有大請求與 CPU 限制，大檔必失敗）；
+其餘渠道（WebDAV、本機儲存、Telegram、Discord、GitHub 等沒有預簽名/斷點續傳機制的）
+維持後端代理。
 
-**原因**：小檔走 HF 的 LFS `basic`（整檔一次 PUT），大檔則由 HF 回傳 `multipart` 分片指令，
-瀏覽器改為直連 HF 的分片儲存域名（與 basic 不同主機）。這條連線在部分網路環境／
-Cloudflare 邊緣節點上會被重置（`ERR_CONNECTION_RESET`），因此永遠無法完成分片。
+### 11.1 HuggingFace（分片維持啟用，移除無用開關）
 
-**修正（全部維持直連，不經後端／Workers 中轉）**：
+- LFS batch 固定宣告 `transfers: ["basic", "multipart"]`，HF 會依檔案大小自行回傳
+  basic 或 multipart 指令；**分片功能預設啟用、且不提供關閉開關**（大檔沒有分片不可能成功）。
+- 上一版曾加入的「只宣告 basic」開關、以及 `/api/fs/multipart/relay-part` 後端中轉端點，
+  已全部移除（等於無用程式碼，且會讓大檔被迫走 Workers）。
+- 前端保留兩項強化：
+  - 分片遇到沒有 HTTP 狀態碼的網路層失敗（連線重置）時，會重新簽名後再試，
+    而不是拿同一個失效 URL 連試三次。
+  - 錯誤訊息附上目標主機名：`Upload failed (host)`，方便判斷是哪個端點被重置。
 
-1. HF LFS 上傳預設只宣告 `transfers: ["basic"]`，不再向 HF 要求 multipart
-   → 大檔與小檔都走同一條「瀏覽器直連 HF 的一次性 PUT」路線（實測可用的那條）。
-   程式位置：`backend/src/storage/drivers/huggingface-datasets/hfMultipartOps.js`。
-2. 檔案超過 5GB（S3 單次 PUT 上限）時自動仍要求 multipart，避免無法上傳。
-3. 需要斷點續傳時可選擇開啟分片（仍為直連）：儲存設定 `hf_lfs_multipart: true`
-   或環境變數 `HF_LFS_MULTIPART=1`。
-4. 後端保留 `/api/fs/multipart/relay-part` 中轉端點，但**預設關閉**；僅在明確設定
-   `hf_multipart_relay: true` 或 `HF_MULTIPART_RELAY=1` 時啟用（適用無法直連的自架環境）。
-   Cloudflare Workers 因請求大小與 CPU 限制，不建議開啟。
-5. 前端分片失敗訊息改為附帶目標主機名（`Upload failed (host)`）；遇到沒有 HTTP 狀態碼的
-   網路層失敗（連線重置）時會重新簽名後重試，而不是用同一個失效 URL 連試三次。
+### 11.2 OneDrive（原本就是直連，修正標頭）
 
-**驗證**：以 mock HuggingFace（LFS batch + 分片／整檔 PUT + complete + commit）端到端測試：
-- 預設模式：12MB 檔 → 1 個分片、直接 PUT 到上游 URL、ETag 正確、complete 成功。
-- `HF_LFS_MULTIPART=1`：12MB 檔 → 3 個 5MB 分片，URL 仍為上游絕對位址（無中轉）、complete 成功。
-- `frontend` `vitest run`：10 項全數通過。
+- OneDrive 的 `single_session` 會話本來就把 Graph 的 `uploadUrl` 回給前端直傳；
+  但前端一律附加本站的 `Authorization: Bearer <CloudHarbor token>`，對 Graph 而言是無效憑證。
+- 修正：前端只在 uploadUrl **同源（本站後端）** 時才附帶登入憑證；跨域直連時完全不送
+  Authorization，避免 `401 InvalidAuthenticationToken`。
+
+### 11.3 Google Drive（改為預設直連）
+
+- 原本 `initializeFrontendMultipartUpload` 回傳 `/api/fs/multipart/upload-chunk`，
+  由後端代傳到 Google；現改為預設回傳 Google 的 resumable session URL，
+  瀏覽器以 `Content-Range` 直接 PUT（`session.channel = "direct"`）。
+- `signMultipartParts`（斷點續傳重新整理）同步維持直連通道。
+- 保留退路：儲存設定 `upload_channel: "proxy"` 或環境變數 `GD_UPLOAD_CHANNEL=proxy`
+  可切回後端中轉（適用瀏覽器端被 CORS／網路策略限制的環境）。
+
+### 11.4 S3
+
+- 本來就是預簽名 URL 直連，無需修改；確認 `presignedUrls` 仍由後端簽發、
+  瀏覽器直接 PUT 到 S3/R2。
+
+**驗證**：後端 4 個改動檔 `node --check` 全過；`frontend` `vitest run` 10 項全過；
+HuggingFace 以 mock 服務端到端（LFS batch → 分片 PUT → complete → commit）驗證分片流程正常。

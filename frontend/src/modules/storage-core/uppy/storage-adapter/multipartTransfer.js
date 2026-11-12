@@ -65,8 +65,16 @@ export async function signPart(file, partData) {
         throw new Error("single_session 會話缺少有效的 uploadUrl");
       }
 
-      // 對於 single_session（OneDrive / GoogleDrive 後端中轉），需要帶上認證頭，
-      const authHeaders = this.authProvider.getAuthHeaders() || {};
+      // 直連第三方（OneDrive/Graph 等）時絕不能帶本站的 Authorization 標頭，
+      // 只有當 uploadUrl 指向本站後端（中轉模式）時才附加登入憑證。
+      let isSameOriginUrl = true;
+      try {
+        const parsed = new URL(url, window.location.href);
+        isSameOriginUrl = parsed.origin === window.location.origin;
+      } catch {
+        isSameOriginUrl = true;
+      }
+      const authHeaders = isSameOriginUrl ? (this.authProvider.getAuthHeaders() || {}) : {};
 
       return {
         url,
@@ -200,18 +208,13 @@ export async function signPart(file, partData) {
       throw new Error(`找不到分片 ${partData.partNumber} 的預簽名URL。${hint}`);
     }
 
-    // 後端中轉分片（例如 HuggingFace）：URL 指向本站 API，需要帶上登入憑證
-    const requiresAuth = urlInfo?.requiresAuth === true || urlInfo?.requires_auth === true;
-    const relayAuthHeaders = requiresAuth ? (this.authProvider.getAuthHeaders() || {}) : {};
-
     return {
       url: resolveAbsoluteApiUrl(urlInfo.url),
       headers: {
-        ...relayAuthHeaders,
+        ...(urlInfo.headers && typeof urlInfo.headers === "object" ? urlInfo.headers : {}),
         "Content-Type": "application/octet-stream",
         ...(session?.skipUpload === true ? { "x-cloudharbor-skip-upload": "1" } : {}),
       },
-      requiresAuth,
       strategy: "per_part_url",
       partNumber: partData.partNumber,
       fileId: file.id,

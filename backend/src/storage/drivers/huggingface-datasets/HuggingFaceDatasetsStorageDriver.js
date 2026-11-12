@@ -74,11 +74,6 @@ export class HuggingFaceDatasetsStorageDriver extends BaseDriver {
     this._revision = String(config?.revision || DEFAULT_REVISION).trim() || DEFAULT_REVISION;
     this._token = String(config?.hf_token || "").trim() || null;
     this._useXet = config?.hf_use_xet === true;
-    // HuggingFace LFS 分片（multipart）開關：
-    // - 預設 false：只宣告 basic，整檔一次直傳（瀏覽器直連 HF，不經後端）
-    // - 需要斷點續傳時可設 hf_lfs_multipart=true 或環境變數 HF_LFS_MULTIPART=1
-    this._useLfsMultipart =
-      config?.hf_lfs_multipart === true || String(process.env.HF_LFS_MULTIPART || "").trim() === "1";
     this._usePathsInfo = config?.hf_use_paths_info === true;
     this._treeLimit = Number.isFinite(Number(config?.hf_tree_limit)) ? Math.floor(Number(config?.hf_tree_limit)) : null;
     this._deleteLfsOnRemove = config?.hf_delete_lfs_on_remove === true;
@@ -1662,8 +1657,7 @@ export class HuggingFaceDatasetsStorageDriver extends BaseDriver {
       uploadId,
       strategy: "per_part_url",
       key: fsPath.replace(/^\/+/, ""),
-      // 預設改走本後端中轉（瀏覽器不再直連 HF 分片存儲域名），避免跨域/連線重置
-      presignedUrls: isAlreadyUploaded ? presignedUrls : this._relayPresignedUrls(uploadId, presignedUrls),
+      presignedUrls,
       partSize: isAlreadyUploaded ? fileSize : (instructions.partSize || fileSize),
       totalParts: presignedUrls.length,
       fileName,
@@ -1677,147 +1671,6 @@ export class HuggingFaceDatasetsStorageDriver extends BaseDriver {
         retryPolicy: { maxAttempts: 3 },
       },
     };
-  }
-
-  /**
-   * 是否啟用「分片中轉」：瀏覽器把分片送到本站後端，由後端再 PUT 給 HuggingFace。
-   * 目的：避免瀏覽器直連 HF 分片存儲域名時被 CORS / 中間網路 / 連線重置（ERR_CONNECTION_RESET）擋掉。
-   * 可由儲存設定 hf_multipart_relay=false 或環境變數 HF_MULTIPART_RELAY=0 關閉。
-   */
-  _isMultipartRelayEnabled() {
-    // 直連優先：預設不中轉（Cloudflare Workers 等環境無法承載大檔案中轉）
-    // 只有在明確設定 hf_multipart_relay=true 或 HF_MULTIPART_RELAY=1 時才啟用
-    const raw = this.config?.hf_multipart_relay;
-    if (raw === true || raw === 1 || raw === "1" || raw === "true") return true;
-    return String(process.env.HF_MULTIPART_RELAY || "").trim() === "1";
-  }
-
-  /**
-   * 把 HF 的預簽名分片 URL 換成本站後端的中轉端點（原始 URL 仍保存在會話 meta 裡）
-   */
-  _relayPresignedUrls(uploadId, presignedUrls) {
-    const list = Array.isArray(presignedUrls) ? presignedUrls : [];
-    if (!this._isMultipartRelayEnabled() || !uploadId) return list;
-    return list.map((item) => {
-      const rawUrl = String(item?.url || "");
-      // 秒傳/跳過上傳的哨兵 URL 不做中轉
-      if (!rawUrl || rawUrl.startsWith("/__uppy_skip_upload__")) return item;
-      return {
-        ...item,
-        url: `/api/fs/multipart/relay-part?upload_id=${encodeURIComponent(String(uploadId))}&part_number=${encodeURIComponent(
-          String(item.partNumber),
-        )}`,
-        requiresAuth: true,
-        relayed: true,
-      };
-    });
-  }
-
-  /**
-   * 中轉上傳單一分片：把瀏覽器送來的分片位元組原樣 PUT 到 HF 的預簽名 URL
-   * @returns {Promise<{success: boolean, partNumber: number, etag: string, size: number}>}
-   */
-  async relayMultipartPart(_subPath, uploadId, partNumber, body, options = {}) {
-    this._ensureInitialized();
-    const { db } = options || {};
-    if (!db || !uploadId) {
-      throw new DriverError("HuggingFace 分片中轉失敗：缺少必要引數", {
-        status: ApiStatus.BAD_REQUEST,
-        expose: true,
-      });
-    }
-
-    const sessionRow = await findUploadSessionById(db, { id: uploadId });
-    if (!sessionRow) {
-      throw new DriverError("HuggingFace 分片中轉失敗：未找到 upload_sessions 記錄", {
-        status: ApiStatus.BAD_REQUEST,
-        expose: true,
-      });
-    }
-    if (String(sessionRow.storage_type) !== String(this.type)) {
-      throw new DriverError("HuggingFace 分片中轉失敗：會話儲存型別不匹配", {
-        status: ApiStatus.BAD_REQUEST,
-        expose: true,
-      });
-    }
-
-    let meta = {};
-    try {
-      meta = sessionRow.provider_meta ? JSON.parse(String(sessionRow.provider_meta)) : {};
-    } catch {
-      meta = {};
-    }
-
-    const urls = Array.isArray(meta?.presignedUrls) ? meta.presignedUrls : [];
-    const target = urls.find((x) => Number(x?.partNumber) === Number(partNumber));
-    const targetUrl = String(target?.url || "");
-    if (!targetUrl) {
-      throw new DriverError(
-        `HuggingFace 分片中轉失敗：找不到第 ${partNumber} 分片的上傳連結（可能已過期，請重新簽名後重試）`,
-        {
-          status: ApiStatus.BAD_REQUEST,
-          expose: true,
-          code: "DRIVER_ERROR.HUGGINGFACE_MULTIPART_PART_URL_MISSING",
-        },
-      );
-    }
-
-    // body 可能是 Buffer（一次性讀完）或 ReadableStream（流式轉發，避免大分片佔用記憶體）
-    const isStream = !!body && typeof body.getReader === "function";
-    const buffer = isStream ? null : (Buffer.isBuffer(body) ? body : Buffer.from(body || []));
-    const contentLength =
-      Number(options?.contentLength) > 0 ? Number(options.contentLength) : (buffer ? buffer.length : 0);
-    if (!contentLength) {
-      throw new DriverError("HuggingFace 分片中轉失敗：分片內容為空", {
-        status: ApiStatus.BAD_REQUEST,
-        expose: true,
-      });
-    }
-
-    const isNodeRuntime = typeof process !== "undefined" && !!process?.versions?.node;
-    let resp;
-    try {
-      resp = await fetch(targetUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/octet-stream",
-          "Content-Length": String(contentLength),
-        },
-        body: isStream ? body : buffer,
-        ...(isStream && isNodeRuntime ? { duplex: "half" } : {}),
-      });
-    } catch (e) {
-      throw new DriverError(`HuggingFace 分片中轉失敗：無法連線上游（${e?.message || "fetch failed"}）`, {
-        status: ApiStatus.BAD_GATEWAY,
-        expose: false,
-        code: "DRIVER_ERROR.HUGGINGFACE_UPSTREAM_NETWORK",
-      });
-    }
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      const isAuthIssue = resp.status === 401 || resp.status === 403;
-      throw new DriverError(`HuggingFace 分片中轉失敗：上游返回 HTTP ${resp.status}`, {
-        status: isAuthIssue ? ApiStatus.FORBIDDEN : ApiStatus.BAD_GATEWAY,
-        expose: true,
-        code: isAuthIssue ? "DRIVER_ERROR.HUGGINGFACE_FORBIDDEN" : "DRIVER_ERROR.HUGGINGFACE_HTTP",
-        details: { partNumber: Number(partNumber), response: text?.slice?.(0, 500) || "" },
-      });
-    }
-
-    const etag = resp.headers.get("etag") || "";
-    try {
-      const uploaded = Number(sessionRow.bytes_uploaded) || 0;
-      await updateUploadSessionById(db, {
-        id: String(uploadId),
-        bytesUploaded: uploaded + contentLength,
-        status: "uploading",
-      });
-    } catch (e) {
-      console.warn("[HUGGINGFACE] 分片中轉更新已傳位元組失敗（可忽略）:", e?.message || e);
-    }
-
-    return { success: true, partNumber: Number(partNumber), etag, size: contentLength };
   }
 
   async listMultipartUploads(subPath = "", options = {}) {
@@ -1969,8 +1822,7 @@ export class HuggingFaceDatasetsStorageDriver extends BaseDriver {
         success: true,
         uploadId,
         strategy: "per_part_url",
-        // 這裡同樣回傳「中轉端點」，原始 HF 預簽名 URL 留在會話 meta 內供後端使用
-        presignedUrls: this._relayPresignedUrls(uploadId, filtered),
+        presignedUrls: filtered,
         partSize: meta?.partSize || sessionRow.part_size || null,
         totalParts: Number(sessionRow.total_parts) || metaPresignedUrls.length,
         policy: {
@@ -2028,7 +1880,7 @@ export class HuggingFaceDatasetsStorageDriver extends BaseDriver {
       success: true,
       uploadId,
       strategy: "per_part_url",
-      presignedUrls: this._relayPresignedUrls(uploadId, filtered),
+      presignedUrls: filtered,
       partSize: instructions.partSize || null,
       totalParts: Array.isArray(presignedUrls) ? presignedUrls.length : (sessionRow.total_parts || null),
       resetUploadedParts: true,
