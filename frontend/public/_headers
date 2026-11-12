@@ -23,3 +23,16 @@
 /manifest.json
   Cache-Control: no-cache, no-store, must-revalidate
   Pragma: no-cache
+
+# 入口 HTML 絕不能快取，否則會一直載入舊的 chunk（使用者看到「改了但沒生效」）
+/
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+
+/index.html
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+
+# 帶 hash 的靜態資源可長期快取
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
