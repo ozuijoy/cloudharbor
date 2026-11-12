@@ -376,3 +376,49 @@ uploadPartBytes → uploadSingleFile
 
 **注意**：這是網路層限制，程式只能降低失敗機率（小分片 + 重試 + 續傳）；
 若該網路對 `*.s3-accelerate.amazonaws.com` 直接封鎖，仍需要換網路或改用支援中轉的部署。
+
+## 十二、大檔上傳全渠道複查（直連 + Workers 中轉）
+
+逐一檢查 S3、HuggingFace、OneDrive、Google Drive、Telegram、Discord、WebDAV、本機、GitHub 的大檔上傳路徑，修正以下問題。
+
+### 12.1 前端（所有分片渠道共用）
+
+| 問題 | 影響渠道 | 修正 |
+| --- | --- | --- |
+| 「超過 16MB 自動切分片」實際沒生效：舊上傳外掛沒移除，新的 AwsS3 外掛因 id 重複安裝失敗，仍用整檔單次 PUT；中轉模式下甚至可能同時存在兩個上傳外掛 | S3、HuggingFace、OneDrive、Telegram、Discord… | `configureUploadMethod` 記錄每次安裝的外掛 id，切換前精準移除；`StorageAdapter.destroy()` 一併移除預初始化前處理器；切換失敗直接報錯不再默默沿用舊方式 |
+| single_session（OneDrive / Google Drive 直連、Telegram / Discord / GD 中轉）**任何一次連線重置或 5xx 就整檔失敗**，完全沒有重試 | OneDrive、Google Drive、Telegram、Discord | 網路錯誤、408/416/429/5xx 一律指數退避重試（至少 6 次）；直連第三方時先向後端查詢上游已收到的位元組，**只補傳缺少的後半段**，已收到則直接視為成功 |
+| Google Drive 直連中間分片回 `308 Resume Incomplete` 被當成錯誤 | Google Drive | 308 視為成功 |
+| OneDrive / Google Drive 分片未設定 `getChunkSize`，前端切片大小與後端 `partSize` 不一致 → Content-Range 錯位 | OneDrive、Google Drive | 啟用分片預初始化，以後端回傳的 partSize 切片 |
+| Telegram / Discord 前端分片大小可能與後端 clamp 後的值不同 → 分片編號錯位 | Telegram、Discord | 同上，啟用預初始化 |
+| per_part_url 只重試 3 次、503 SlowDown 不重試 | S3、HuggingFace | 至少 6 次、指數退避（上限 15 秒）；408/429/5xx 同 URL 重送，網路錯誤重新簽名 |
+
+### 12.2 後端
+
+- **Google Drive 直連根本無法使用**：resumable session 在後端建立時沒帶瀏覽器 `Origin`，Google 不回 CORS 標頭，瀏覽器 PUT 全被擋。
+  → `/api/fs/multipart/init` 把請求的 Origin 傳給驅動，建立 session 時帶上；拿不到 Origin 時自動改走後端中轉。
+  通道記錄在 `upload_sessions.provider_meta`，續傳沿用同一通道（舊 session 預設中轉）。
+- Google Drive 狀態查詢：`308` 沒有 `Range` 標頭代表已收到 0 位元組（原本回 null，續傳判斷失準）；同步回傳 `done` / `bytesUploaded`。
+- **OneDrive 後端串流上傳 > 60MiB 必定失敗**（Graph 單次 PUT 上限 60MiB，原本整檔一次 PUT）
+  → 新增 `uploadSessionChunked`：每段 10MiB（320KiB 對齊），邊讀邊傳、記憶體恆定，5xx/429 自動重試。
+- OneDrive 前端分片 `partSize` 對齊 320KiB 且 ≤ 60MiB。
+- **Node/Docker：串流 body 的 fetch 缺 `duplex: "half"` 直接 TypeError**（Google Drive 中轉、OneDrive、HF、GitHub…）
+  → Node 入口安裝全域補丁（`src/utils/streamBody.js`）。
+- **Workers 中轉：串流 PUT 一律變成 chunked 傳輸**，不少 WebDAV 服務（堅果雲、部分 nginx/Apache、Alist 等）與 Google 會回 411/400 或斷線
+  → WebDAV、Google Drive 改用 `FixedLengthStream` 送出明確 Content-Length。
+- Telegram：官方 Bot API 分片上限 clamp 到 20MB（getFile 只能下載 ≤20MB）；partCount 依實際 partSize 重算。
+- Discord：未設定時預設分片改 8MB（剛好 10MiB 加表單開銷偶爾 413）；partCount 依實際 partSize 重算。
+
+### 12.3 Workers 部署的已知限制（無法用程式解決）
+
+- Cloudflare Workers 單一請求體上限：Free/Pro 100MB、Business 200MB、Enterprise 500MB。
+  不支援分片的渠道（**WebDAV、本機、GitHub**）走 `PUT /api/fs/upload` 整檔經過 Worker，超過上限必失敗；
+  這些渠道的大檔請改用 Docker/Node 部署，或改存到支援分片的渠道。
+- Telegram / Discord / Google Drive（中轉）每片只有 5~20MB，經 Workers 沒有大小問題。
+- S3 / HuggingFace / OneDrive / Google Drive（直連）不經 Workers。
+
+### 驗證
+
+- 前端 `vitest`：19 項全過（新增 `multipartRetry.spec.js` 9 項：308、斷點補傳、上游已收到、4xx 不重試、中轉重送、重新簽名、503 退避）。
+- 後端 `node --test`：16 項全過（新增 `upload-channels.test.js` 8 項：分塊讀取、duplex 補丁、FixedLengthStream、OneDrive 130MiB 分段與 503 重試、GD Origin、308 狀態解析）。
+- `vite build` 成功；`wrangler deploy --dry-run` 打包成功。
+- 未在真實雲端帳號上實測（沙箱沒有各渠道憑證），部署後建議各渠道用 200MB 以上檔案實測一次。

@@ -8,7 +8,8 @@ import { buildAuthHeadersForRequest } from "@/modules/security/index.js";
 import { api } from "@/api";
 
 const MB = 1024 * 1024;
-const DEFAULT_DISCORD_PART_SIZE_BYTES = 10 * MB;
+// 預設 8MB：剛好 10MiB 的分片加上表單開銷偶爾會被 Discord 以 413 拒絕
+const DEFAULT_DISCORD_PART_SIZE_BYTES = 8 * MB;
 const DEFAULT_DISCORD_UPLOAD_CONCURRENCY = 1;
 
 function toPositiveInt(value, fallback) {
@@ -217,7 +218,9 @@ export class DiscordDriver {
         fallback: DEFAULT_DISCORD_UPLOAD_CONCURRENCY,
       });
 
-      const adapter = new StorageAdapter(path || "/", uppy, { partSize });
+      // enableMultipartPreinit：以後端 init 回傳的 partSize 切片（後端會依驅動上限 clamp），
+      // 避免前後端分片大小不一致導致分片編號錯位
+      const adapter = new StorageAdapter(path || "/", uppy, { partSize, enableMultipartPreinit: true });
 
       const awsS3Options = {
         id: "DiscordFsMultipart",

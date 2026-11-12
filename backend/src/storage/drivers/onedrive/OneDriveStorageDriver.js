@@ -335,9 +335,9 @@ export class OneDriveStorageDriver extends BaseDriver {
         const session = await this.graphClient.createUploadSession(remotePath || "", {
           conflictBehavior: "rename",
         });
-        item = await this.graphClient.uploadSessionSingleChunk(session.uploadUrl, fileOrStream, {
+        // Graph 單次 PUT 上限 60MiB：改為分段（每段 10MiB）串流上傳
+        item = await this.graphClient.uploadSessionChunked(session.uploadUrl, fileOrStream, {
           contentLength,
-          contentType: effectiveContentType,
         });
       } else {
         // 未知大小：保守起見使用 Simple Upload，依賴環境自身的大小限制
@@ -423,9 +423,8 @@ export class OneDriveStorageDriver extends BaseDriver {
         const session = await this.graphClient.createUploadSession(remotePath || "", {
           conflictBehavior: "replace",
         });
-        item = await this.graphClient.uploadSessionSingleChunk(session.uploadUrl, content, {
+        item = await this.graphClient.uploadSessionChunked(session.uploadUrl, content, {
           contentLength,
-          contentType: effectiveContentType,
         });
       } else {
         // 小檔案更新：直接 Simple Upload 覆蓋
@@ -808,9 +807,17 @@ export class OneDriveStorageDriver extends BaseDriver {
         conflictBehavior: "replace",
       });
 
-      const effectivePartSize = partSize || 5 * 1024 * 1024;
-      const calculatedPartCount =
-        partCount || Math.max(1, Math.ceil(fileSize / effectivePartSize));
+      // Graph uploadSession：每段須為 320 KiB 整數倍（最後一段除外）且 ≤ 60 MiB，
+      // 否則中間某一段會被 Graph 以 400/416 拒絕，表現為「上傳到一半失敗」
+      const OD_UNIT = 320 * 1024;
+      const OD_MAX_PART = 60 * 1024 * 1024;
+      const requestedPartSize = Number(partSize) > 0 ? Number(partSize) : 5 * 1024 * 1024;
+      const effectivePartSize = Math.max(
+        OD_UNIT,
+        Math.min(OD_MAX_PART - (OD_MAX_PART % OD_UNIT), Math.round(requestedPartSize / OD_UNIT) * OD_UNIT),
+      );
+      const calculatedPartCount = Math.max(1, Math.ceil(fileSize / effectivePartSize));
+      void partCount;
 
       // uploadId 使用 CloudHarbor 的 upload_sessions.id（upl_xxx）
       // session.uploadUrl 仍然返回 Graph 的 uploadUrl（瀏覽器直傳 OneDrive）

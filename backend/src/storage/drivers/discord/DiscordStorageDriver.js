@@ -178,7 +178,8 @@ export class DiscordStorageDriver extends BaseDriver {
       Number.isFinite(this.directUploadMaxBytes) && this.directUploadMaxBytes > 0
         ? Math.max(1, Math.floor(this.directUploadMaxBytes / (1024 * 1024)))
         : 10;
-    let partSizeMb = Number.isFinite(partSizeMbRaw) && partSizeMbRaw > 0 ? Math.floor(partSizeMbRaw) : maxPartSizeMb;
+    // 未設定時預設 8MB：剛好 10MiB 的分片加上 multipart 表單開銷，偶爾會被 Discord 以 413 拒絕
+    let partSizeMb = Number.isFinite(partSizeMbRaw) && partSizeMbRaw > 0 ? Math.floor(partSizeMbRaw) : Math.min(8, maxPartSizeMb);
     partSizeMb = Math.max(1, Math.min(maxPartSizeMb, partSizeMb));
 
     const urlProxy = this.config?.url_proxy ? String(this.config.url_proxy).trim() : "";

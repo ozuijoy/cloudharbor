@@ -214,7 +214,9 @@ export class TelegramDriver {
         fallback: DEFAULT_TG_UPLOAD_CONCURRENCY,
       });
 
-      const adapter = new StorageAdapter(path || "/", uppy, { partSize });
+      // enableMultipartPreinit：以後端 init 回傳的 partSize 切片（官方 Bot API 會被 clamp 到 ≤20MB），
+      // 避免前後端分片大小不一致導致分片編號錯位
+      const adapter = new StorageAdapter(path || "/", uppy, { partSize, enableMultipartPreinit: true });
 
       const awsS3Options = {
         id: "TelegramFsMultipart",

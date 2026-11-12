@@ -208,12 +208,36 @@ let pluginManager = null;
 let fsAdapterHandle = null;
 let fsUploadSession = null;
 
+// 目前 Uppy 上所有外掛 id
+const listUppyPluginIds = (uppy) => {
+  const ids = [];
+  try {
+    uppy?.iteratePlugins?.((plugin) => {
+      if (plugin?.id) ids.push(plugin.id);
+    });
+  } catch {}
+  return ids;
+};
+
 const disposeFsAdapterHandle = () => {
   if (fsAdapterHandle?.adapter?.destroy) {
     try {
       fsAdapterHandle.adapter.destroy();
     } catch (error) {
       log.warn("[Uppy] 清理StorageAdapter失敗", error);
+    }
+  }
+  // 移除這個 handle 安裝的上傳外掛（AwsS3 / XHRUpload…）。
+  // 不移除的話，切換上傳方式時新外掛會因 id 重複而安裝失敗，
+  // 或兩個上傳外掛同時存在，導致同一個檔案被上傳兩次、或仍用舊方式（整檔單次 PUT）上傳。
+  const uppy = uppyInstance.value;
+  const pluginIds = Array.isArray(fsAdapterHandle?.pluginIds) ? fsAdapterHandle.pluginIds : [];
+  for (const id of pluginIds) {
+    try {
+      const plugin = uppy?.getPlugin?.(id);
+      if (plugin) uppy.removePlugin(plugin);
+    } catch (error) {
+      log.warn(`[Uppy] 移除上傳外掛 ${id} 失敗（可忽略）`, error);
     }
   }
   fsAdapterHandle = null;
@@ -483,8 +507,16 @@ const configureUploadMethod = async () => {
         driverStrategy.value === STORAGE_STRATEGIES.BACKEND_FORM)
     ) {
       disposeFsAdapterHandle();
+      // 記下 applyFsUploader 新增了哪些外掛（不含 Sha256 這類前處理外掛），之後切換方式時才能精準移除
+      const before = new Set(listUppyPluginIds(uppyInstance.value));
       const handle = driver.fs.applyFsUploader(uppyInstance.value, { strategy: driverStrategy.value, path: props.currentPath });
-      fsAdapterHandle = handle ? { ...handle, mode: handle.mode || driverStrategy.value } : null;
+      const pluginIds = listUppyPluginIds(uppyInstance.value).filter(
+        (id) => !before.has(id) && id !== "Sha256PreprocessPlugin" && id !== "ServerResumePlugin",
+      );
+      fsAdapterHandle =
+        handle && typeof handle === "object"
+          ? { ...handle, mode: handle.mode || driverStrategy.value, pluginIds }
+          : { adapter: null, mode: driverStrategy.value, pluginIds };
     }
   } catch (e) {
     log.warn('[Uppy] configureUploadMethod 解析驅動失敗', e);
@@ -820,8 +852,14 @@ const startUpload = async () => {
             `${Math.round(LARGE_FILE_MULTIPART_THRESHOLD / 1024 / 1024)}MB，自動切換為分片上傳（直連）`,
         );
         uploadMethod.value = "multipart";
+        // configureUploadMethod 會先移除舊的上傳外掛再安裝分片外掛
         await configureUploadMethod();
-        driverStrategy.value = STORAGE_STRATEGIES.PRESIGNED_MULTIPART;
+        if (fsAdapterHandle?.mode !== STORAGE_STRATEGIES.PRESIGNED_MULTIPART) {
+          throw new Error("切換為分片上傳失敗：分片上傳外掛未能安裝");
+        }
+        // 分片模式需要的輔助外掛（HuggingFace 的 sha256、斷點續傳檢查）也要跟著更新
+        configureServerResumePlugin();
+        configureSha256PreprocessPlugin();
       }
     } catch (e) {
       log.warn("[Uppy] 自動切換分片上傳失敗（忽略）", e);

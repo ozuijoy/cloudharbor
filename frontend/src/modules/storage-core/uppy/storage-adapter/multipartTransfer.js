@@ -11,6 +11,65 @@ import { createLogger } from "@/utils/logger.js";
 
 const log = createLogger("MultipartTransfer");
 
+// 每個分片至少嘗試的次數（不穩定網路下連線被重置很常見）
+const MIN_PART_ATTEMPTS = 6;
+
+function sleepUnlessAborted(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("The operation was aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      try { signal?.removeEventListener?.("abort", onAbort); } catch {}
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(new DOMException("The operation was aborted", "AbortError"));
+    }
+    try { signal?.addEventListener?.("abort", onAbort, { once: true }); } catch {}
+  });
+}
+
+function isSameOrigin(rawUrl) {
+  try {
+    return new URL(rawUrl, window.location.href).origin === window.location.origin;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * 從標頭讀出 Content-Range: bytes start-end/total
+ * @returns {{start:number,end:number,total:number}|null}
+ */
+export function parseContentRange(headers) {
+  if (!headers) return null;
+  const raw = headers["Content-Range"] ?? headers["content-range"] ?? null;
+  const m = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(String(raw || "").trim());
+  if (!m) return null;
+  const start = Number(m[1]);
+  const end = Number(m[2]);
+  const total = m[3] === "*" ? NaN : Number(m[3]);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return { start, end, total: Number.isFinite(total) ? total : "*" };
+}
+
+/**
+ * nextExpectedRanges（["12345-", "200-300"]）→ 第一個缺口的起點
+ * @returns {number|null}
+ */
+export function parseNextExpectedStart(ranges) {
+  if (!Array.isArray(ranges) || ranges.length === 0) return null;
+  let min = null;
+  for (const r of ranges) {
+    const n = Number.parseInt(String(r).split("-")[0], 10);
+    if (Number.isFinite(n) && n >= 0) min = min == null ? n : Math.min(min, n);
+  }
+  return min;
+}
+
 /**
  * 簽名分片
  * @param {Object} file Uppy檔案物件
@@ -409,16 +468,18 @@ export async function uploadPartBytes({ signature, body, onComplete, size, onPro
       }
     }
 
-    const uploadOnce = (uploadUrl) =>
+    // 單次 PUT。single_session 續傳時可能只送分片的後半段：
+    // reqHeaders/reqBody 可覆寫，progressOffset 為已確認送達的位元組數（進度從這裡接著算）
+    const uploadOnce = (uploadUrl, reqHeaders = headers, reqBody = body, progressOffset = 0) =>
       new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open("PUT", uploadUrl, true);
         // 供錯誤訊息顯示目標主機（診斷外部儲存連線被重置用）
         xhr.__cloudharborUrl = uploadUrl;
 
-        if (headers) {
-          Object.keys(headers).forEach((key) => {
-            xhr.setRequestHeader(key, headers[key]);
+        if (reqHeaders) {
+          Object.keys(reqHeaders).forEach((key) => {
+            xhr.setRequestHeader(key, reqHeaders[key]);
           });
         }
 
@@ -445,9 +506,8 @@ export async function uploadPartBytes({ signature, body, onComplete, size, onPro
 
         const progressHandler = (evt) => {
           try {
-            const loaded = evt?.loaded ?? 0;
-            const total = evt?.total ?? size;
-            onProgress?.({ loaded, total, lengthComputable: true });
+            const loaded = Math.min(size, progressOffset + (evt?.loaded ?? 0));
+            onProgress?.({ loaded, total: size, lengthComputable: true });
           } catch {}
         };
         xhr.upload.addEventListener("progress", progressHandler);
@@ -456,7 +516,10 @@ export async function uploadPartBytes({ signature, body, onComplete, size, onPro
           cleanup();
           const target = ev.target;
 
-          if (target.status < 200 || target.status >= 300) {
+          // Google Drive resumable：中間分片成功時回 308 Resume Incomplete（沒有 Location，瀏覽器不會跟隨），
+          // 這是正常的「已收到、請繼續」，不是錯誤
+          const isResumeIncomplete = isSingleSession && target.status === 308;
+          if (!isResumeIncomplete && (target.status < 200 || target.status >= 300)) {
             try {
               log.error("[StorageAdapter] uploadPartBytes HTTP error", {
                 status: target.status,
@@ -530,36 +593,47 @@ export async function uploadPartBytes({ signature, body, onComplete, size, onPro
           reject(error);
         });
 
-        xhr.send(body);
+        xhr.send(reqBody);
       });
 
     // 失敗策略預設無感重試
-    // - 對 per_part_url：遇到“簽名過期/403”時，嘗試重新簽名當前分片並重傳
+    // - per_part_url：遇到“簽名過期/403/網路層失敗”時，重新簽名當前分片並重傳
+    // - single_session（OneDrive/Google Drive 直連、Telegram/Discord/GD 中轉）：
+    //   網路層失敗、408/429/5xx 一律退避重試；直連第三方時先向後端查詢上游已收到的位元組，
+    //   只補傳缺少的部分（避免重送已收到的區段被上游以 416/400 拒絕）
     // - 超過最大重試次數仍失敗，則丟擲錯誤交給 Uppy/UI
     const retryMaxAttemptsCandidate =
       sessionForPolicy?.policy?.retryPolicy?.maxAttempts ??
       sessionForPolicy?.policy?.retry_policy?.maxAttempts ??
       null;
     const retryMaxAttemptsParsed = Number(retryMaxAttemptsCandidate);
-    const maxAttempts =
+    const policyMaxAttempts =
       Number.isFinite(retryMaxAttemptsParsed) && retryMaxAttemptsParsed > 0
         ? Math.floor(retryMaxAttemptsParsed)
         : Number(this.config.maxRetries) || 3;
+    // 大檔在不穩定網路上（連線被重置）3 次不夠，至少給 6 次
+    const maxAttempts = Math.max(policyMaxAttempts, MIN_PART_ATTEMPTS);
 
     let lastError = null;
     let currentUrl = url;
+    let currentHeaders = headers;
+    let currentBody = body;
+    let currentOffset = 0;
+
+    const singleSessionRange = isSingleSession ? parseContentRange(headers) : null;
+    const isCrossOriginSingleSession = isSingleSession && !isSameOrigin(url);
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         if (attempt > 1) {
-          // 連線被重置後立刻重試容易再次被重置，加入短暫退避
-          const backoffMs = 800 * (attempt - 1);
+          // 連線被重置後立刻重試容易再次被重置，指數退避（上限 15 秒）
+          const backoffMs = Math.min(15000, 1000 * 2 ** (attempt - 2));
           log.warn(
             `[StorageAdapter] ⚠️ 分片${partNumber ?? "?"}重試上傳 attempt=${attempt}/${maxAttempts}（退避 ${backoffMs}ms）`,
           );
-          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          await sleepUnlessAborted(backoffMs, signal);
         }
-        return await uploadOnce(currentUrl);
+        return await uploadOnce(currentUrl, currentHeaders, currentBody, currentOffset);
       } catch (err) {
         lastError = err;
 
@@ -571,37 +645,99 @@ export async function uploadPartBytes({ signature, body, onComplete, size, onPro
         const status = err?.source?.status ?? null;
         const responseText = String(err?.source?.responseText || "");
 
-        // single_session（OneDrive/GoogleDrive/Telegram）：
-        if (
-          isSingleSession &&
-          status === 404 &&
-          /upload session was not found|itemNotFound/i.test(responseText)
-        ) {
-          throw new Error("上傳會話已過期（OneDrive 上游返回 404），請重新開始上傳");
+        if (isSingleSession) {
+          if (status === 404 && /upload session was not found|itemNotFound|not ?found/i.test(responseText)) {
+            throw new Error("上傳會話已過期（上游返回 404），請重新開始上傳");
+          }
+
+          const retryableSingle =
+            status == null || status === 0 || status === 408 || status === 429 || status === 416 || status >= 500;
+          if (!retryableSingle || attempt >= maxAttempts) {
+            throw err;
+          }
+
+          // 直連第三方（OneDrive / Google Drive）：先確認上游實際收到多少，再決定補傳範圍
+          if (isCrossOriginSingleSession && singleSessionRange && storageKey) {
+            const uploadIdForSync = sessionForPolicy?.uploadId || signature?.uploadId || null;
+            let nextStart = null;
+            let remoteDone = false;
+            try {
+              if (uploadIdForSync) {
+                const fsPath = this.buildFullPathFromKey(storageKey);
+                const syncResp = await fsApi.signMultipartParts(fsPath, uploadIdForSync, [partNumber ?? 1]);
+                const sess = syncResp?.success ? syncResp?.data?.session || {} : {};
+                remoteDone = sess?.done === true;
+                nextStart = parseNextExpectedStart(sess?.nextExpectedRanges);
+              }
+            } catch (syncError) {
+              log.warn("[StorageAdapter] 查詢上游已接收位元組失敗，將整片重送:", syncError?.message || syncError);
+            }
+
+            const { start: rangeStart, end: rangeEnd, total: rangeTotal } = singleSessionRange;
+            if (remoteDone || (nextStart != null && nextStart > rangeEnd)) {
+              // 上游其實已經收到這一片（只是回應在路上被重置）
+              log.debug(`single_session 分片${partNumber}上游已收到（next=${nextStart}），視為成功`);
+              try { onProgress?.({ loaded: size, total: size, lengthComputable: true }); } catch {}
+              const etag = `single-session-part-${partNumber ?? Date.now()}`;
+              try { onComplete(etag); } catch {}
+              return { ETag: etag };
+            }
+            if (nextStart != null && nextStart > rangeStart && nextStart <= rangeEnd) {
+              // 只補傳這一片缺少的後半段
+              const skip = nextStart - rangeStart;
+              currentBody = body.slice(skip);
+              currentOffset = skip;
+              currentHeaders = {
+                ...headers,
+                "Content-Range": `bytes ${nextStart}-${rangeEnd}/${rangeTotal}`,
+              };
+              log.warn(`[StorageAdapter] single_session 分片${partNumber}從位元組 ${nextStart} 續傳`);
+              continue;
+            }
+            if (nextStart != null && nextStart < rangeStart) {
+              throw new Error(
+                `上游會話缺少前面的資料（期望從位元組 ${nextStart} 開始，目前分片從 ${rangeStart} 開始），請重新開始上傳`,
+              );
+            }
+          }
+
+          // 中轉（本站 /upload-chunk，後端有冪等處理）或無法查詢狀態：整片重送
+          currentBody = body;
+          currentOffset = 0;
+          currentHeaders = headers;
+          continue;
         }
 
         const mayBeExpiredSignature =
-          !isSingleSession &&
-          (status === 401 ||
-            status === 403 ||
-            (status === 400 && /expired|signature|token|Request has expired/i.test(responseText)) ||
-            // 網路層失敗（ERR_CONNECTION_RESET / 連線中斷）沒有 HTTP 狀態碼：
-            // 常見於預簽名 URL 失效、或外部儲存域名連線被重置，重新簽名後再試一次
-            status == null);
+          status === 401 ||
+          status === 403 ||
+          (status === 400 && /expired|signature|token|Request has expired/i.test(responseText)) ||
+          // 網路層失敗（ERR_CONNECTION_RESET / 連線中斷）沒有 HTTP 狀態碼：
+          // 常見於預簽名 URL 失效、或外部儲存域名連線被重置，重新簽名後再試一次
+          status == null ||
+          status === 0;
+        const transientServerError = status === 408 || status === 429 || (status != null && status >= 500);
 
-        // 只有“可能是預簽名過期”才嘗試重新簽名
-        if (!mayBeExpiredSignature || attempt >= maxAttempts) {
+        if ((!mayBeExpiredSignature && !transientServerError) || attempt >= maxAttempts) {
           throw err;
+        }
+
+        // 伺服器暫時性錯誤（S3 503 SlowDown / 500）：同一個 URL 退避後重送即可
+        if (transientServerError) {
+          continue;
         }
 
         // 重新簽名當前 partNumber（只對 per_part_url 有意義）
         if (!storageKey || partNumber == null) {
+          // 單檔案 PUT 等沒有 partNumber 的情境：網路層失敗也值得同一 URL 再試
+          if (status == null || status === 0) continue;
           throw err;
         }
 
         const uploadIdForSign =
           sessionForPolicy?.uploadId || signature?.uploadId || signature?.upload_id || null;
         if (!uploadIdForSign) {
+          if (status == null || status === 0) continue;
           throw err;
         }
 
@@ -631,6 +767,8 @@ export async function uploadPartBytes({ signature, body, onComplete, size, onPro
           const nextUrl = picked?.url ? resolveAbsoluteApiUrl(picked.url) : null;
 
           if (!nextUrl) {
+            // 簽不到新 URL：網路層失敗仍用原 URL 再試（多數是暫時性重置）
+            if (status == null || status === 0) continue;
             throw new Error("重新簽名失敗：後端未返回新的 presignedUrl");
           }
 
@@ -650,14 +788,19 @@ export async function uploadPartBytes({ signature, body, onComplete, size, onPro
           } catch {}
 
           currentUrl = nextUrl;
+          if (picked?.headers && typeof picked.headers === "object") {
+            currentHeaders = { ...headers, ...picked.headers };
+          }
           // 繼續下一輪迴圈重試
           continue;
         } catch (signError) {
-          log.warn("[StorageAdapter] 重新簽名失敗，將丟擲原始上傳錯誤:", signError?.message || signError);
+          log.warn("[StorageAdapter] 重新簽名失敗:", signError?.message || signError);
           const signMsg = String(signError?.message || "");
           if (signMsg.includes("重置上傳會話") || signMsg.includes("重置") || signMsg.includes("重新開始上傳")) {
             throw signError;
           }
+          // 簽名請求本身失敗（後端暫時不可用）：網路層錯誤時沿用原 URL 繼續重試
+          if (status == null || status === 0) continue;
           throw err;
         }
       }

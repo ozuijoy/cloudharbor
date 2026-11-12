@@ -9,6 +9,7 @@
  */
 
 import { DriverError } from "../../../../http/errors.js";
+import { readStreamInChunks } from "../../../../utils/streamBody.js";
 
 /**
  * 區域到 Graph API 基礎 URL 的對映
@@ -323,6 +324,113 @@ export class OneDriveGraphClient {
    * @param {string} uploadUrl 上傳會話返回的 uploadUrl
    * @returns {Promise<{ expirationDateTime: string|null, nextExpectedRanges: string[]|null, raw: any }>}
    */
+  /**
+   * 以 uploadSession 分段上傳（後端串流 → Graph）
+   * - Graph 規定單次 PUT ≤ 60 MiB，且每段大小須為 320 KiB 的整數倍（最後一段除外）
+   * - 原本的 uploadSessionSingleChunk 一次 PUT 整檔，> 60MiB 必定失敗
+   * - 每次只在記憶體保留一段（預設 10 MiB），Workers 128MB 記憶體上限也能跑
+   * @param {string} uploadUrl
+   * @param {any} content ReadableStream / Blob / Uint8Array / ArrayBuffer / string
+   * @param {{ contentLength: number, chunkSize?: number, maxAttempts?: number }} options
+   * @returns {Promise<Object|null>} 最終 driveItem
+   */
+  async uploadSessionChunked(uploadUrl, content, options = {}) {
+    const { contentLength } = options;
+    if (typeof contentLength !== "number" || !Number.isFinite(contentLength) || contentLength <= 0) {
+      throw new DriverError("OneDrive uploadSessionChunked 需要有效的 contentLength", { status: 400 });
+    }
+    const UNIT = 320 * 1024;
+    const requested = Number(options.chunkSize) || 10 * 1024 * 1024;
+    const chunkSize = Math.max(UNIT, Math.min(60 * 1024 * 1024, Math.floor(requested / UNIT) * UNIT));
+    const maxAttempts = Number(options.maxAttempts) > 0 ? Math.floor(Number(options.maxAttempts)) : 4;
+
+    /** @type {ReadableStream<Uint8Array>} */
+    let stream;
+    if (content && typeof content.getReader === "function") {
+      stream = content;
+    } else if (typeof Blob !== "undefined" && content instanceof Blob) {
+      stream = content.stream();
+    } else if (content instanceof ArrayBuffer || content instanceof Uint8Array || typeof content === "string") {
+      stream = new Blob([content]).stream();
+    } else {
+      throw new DriverError("OneDrive uploadSessionChunked 不支援的內容型別", { status: 400 });
+    }
+
+    let offset = 0;
+    let lastJson = null;
+    for await (const chunk of readStreamInChunks(stream, chunkSize)) {
+      const start = offset;
+      const end = offset + chunk.byteLength - 1;
+      if (end >= contentLength) {
+        throw new DriverError("OneDrive 上傳資料超過宣告的檔案大小", {
+          status: 400,
+          details: { contentLength, received: end + 1 },
+        });
+      }
+
+      let attempt = 0;
+      while (true) {
+        attempt += 1;
+        let response;
+        try {
+          response = await fetch(uploadUrl, {
+            method: "PUT",
+            headers: {
+              "Content-Length": String(chunk.byteLength),
+              "Content-Range": `bytes ${start}-${end}/${contentLength}`,
+            },
+            body: chunk,
+          });
+        } catch (networkError) {
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, Math.min(8000, 500 * 2 ** (attempt - 1))));
+            continue;
+          }
+          throw new DriverError(`OneDrive 分段上傳網路錯誤: ${networkError?.message || networkError}`, {
+            status: 502,
+            cause: networkError,
+          });
+        }
+
+        if (response.status === 202 || response.status === 200 || response.status === 201) {
+          const text = await response.text();
+          if (text) {
+            try {
+              lastJson = JSON.parse(text);
+            } catch {
+              lastJson = null;
+            }
+          }
+          break;
+        }
+
+        const retryable = response.status >= 500 || response.status === 429 || response.status === 408;
+        if (retryable && attempt < maxAttempts) {
+          const retryAfter = Number(response.headers.get("Retry-After"));
+          const delay = Number.isFinite(retryAfter) && retryAfter > 0
+            ? Math.min(30000, retryAfter * 1000)
+            : Math.min(8000, 500 * 2 ** (attempt - 1));
+          try {
+            await response.text();
+          } catch {}
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+        await this._handleErrorResponse(response, uploadUrl);
+      }
+
+      offset = end + 1;
+    }
+
+    if (offset !== contentLength) {
+      throw new DriverError("OneDrive 上傳資料不完整（請求體提前結束）", {
+        status: 400,
+        details: { contentLength, received: offset },
+      });
+    }
+    return lastJson;
+  }
+
   async getUploadSessionInfo(uploadUrl) {
     if (!uploadUrl) {
       throw new DriverError("OneDrive getUploadSessionInfo 需要有效的 uploadUrl", {

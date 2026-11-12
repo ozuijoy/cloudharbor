@@ -201,7 +201,9 @@ export const registerMultipartRoutes = (router, helpers) => {
         userType,
         partSize,
         partCount,
-        { sha256, contentType },
+        // requestOrigin：瀏覽器直連第三方（如 Google Drive resumable）時，
+        // 建立會話必須帶上瀏覽器的 Origin，否則之後瀏覽器 PUT 會被 CORS 擋下
+        { sha256, contentType, requestOrigin: c.req.header("origin") || c.req.header("Origin") || null },
     );
 
     return jsonOk(c, ensureAbsoluteSessionUploadUrl(c, result), "前端分片上傳初始化成功");

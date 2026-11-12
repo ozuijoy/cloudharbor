@@ -3,6 +3,7 @@
  * 預設支援 Reader/Writer/Proxy/Atomic 能力，不提供儲存直鏈（DirectLink）
  */
 
+import { buildUploadFetchInit } from "../../../utils/streamBody.js";
 import { BaseDriver } from "../../interfaces/capabilities/BaseDriver.js";
 /**
  * 模組說明：
@@ -501,16 +502,22 @@ export class WebDavStorageDriver extends BaseDriver {
     try {
       await this._ensureParentDirectories(davPath);
       /** @type {RequestInit} */
-      const init = {
-        method: "PUT",
-        headers,
-        body,
-      };
-      // Node.js 原生 fetch 在使用可讀流作為 body 時必須顯式設定 duplex
-      if (isNodeJSEnvironment() && body != null) {
-        // @ts-ignore
-        init.duplex = "half";
+      const knownLength = Number(ctx.contentLength || ctx.fileSize || 0);
+      const hasKnownLength = Number.isFinite(knownLength) && knownLength > 0;
+      if (hasKnownLength) {
+        // 許多 WebDAV 服務（堅果雲、部分 nginx/Apache 設定、Alist 等）不接受 chunked PUT，
+        // 明確給出長度；Workers 上會改用 FixedLengthStream 讓長度真正生效
+        headers["Content-Length"] = String(knownLength);
       }
+      /** @type {RequestInit} */
+      const init = buildUploadFetchInit(
+        {
+          method: "PUT",
+          headers,
+          body,
+        },
+        { contentLength: hasKnownLength ? knownLength : null },
+      );
       const resp = await fetch(url, init);
       if (!resp.ok && resp.status !== 201 && resp.status !== 204) {
         throw this._wrapError(new Error(`HTTP ${resp.status}`), "上傳檔案失敗", resp.status);

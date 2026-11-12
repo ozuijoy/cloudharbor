@@ -119,6 +119,11 @@ export default {
 
 // ============ Node/Docker 環境啟動邏輯 ============
 if (!isCloudflareWorkers) {
+  // Node 內建 fetch 以串流當 body 時必須帶 duplex: "half"，統一補上，
+  // 避免各驅動（Google Drive / OneDrive / HuggingFace / GitHub…）的串流上傳直接 TypeError
+  const { installNodeFetchDuplexPatch } = await import("./src/utils/streamBody.js");
+  installNodeFetchDuplexPatch();
+
   const bootstrap = async () => {
     const [{ serve }, { default: path }, { default: fs }, { fileURLToPath }, { createSQLiteAdapter }] = await Promise.all([
       import("@hono/node-server"),

@@ -101,8 +101,13 @@ export class TelegramMultipartOperations {
     const MIN_PART_SIZE = 5 * 1024 * 1024;
     const MAX_PART_SIZE = 100 * 1024 * 1024;
     let effectivePartSize = Number.isFinite(partSize) && partSize > 0 ? Math.floor(partSize) : driver.partSizeBytes;
-    effectivePartSize = Math.max(MIN_PART_SIZE, Math.min(MAX_PART_SIZE, effectivePartSize));
-    const calculatedPartCount = partCount || Math.max(1, Math.ceil(fileSize / effectivePartSize));
+    // 官方 Bot API：sendDocument 上傳上限 50MB，且 getFile 只能下載 ≤20MB 的檔案，
+    // 分片超過 20MB 會「能傳不能下」；自建 Bot API 才放寬到 100MB
+    const maxForMode = driver.botApiMode === "self_hosted" ? MAX_PART_SIZE : 20 * 1024 * 1024;
+    effectivePartSize = Math.max(MIN_PART_SIZE, Math.min(maxForMode, effectivePartSize));
+    // partCount 一律依實際 partSize 重算，避免前端傳入值與 clamp 後的 partSize 不一致
+    const calculatedPartCount = Math.max(1, Math.ceil(fileSize / effectivePartSize));
+    void partCount;
 
     // upload_sessions.fs_path 必須是“完整 FS 檔案路徑”，供 /upload-chunk 反查 mount/driver
     const fsPath = this._buildFsPathFromSubPathAndFileName(subPath, fileName, mount);

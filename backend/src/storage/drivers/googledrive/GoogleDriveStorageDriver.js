@@ -17,6 +17,7 @@
  * downloadFile: 返回 StorageStreamDescriptor 物件
  */
 
+import { buildUploadFetchInit } from "../../../utils/streamBody.js";
 import { BaseDriver } from "../../interfaces/capabilities/BaseDriver.js";
 import { CAPABILITIES } from "../../interfaces/capabilities/index.js";
 import { GoogleDriveAuthManager } from "./GoogleDriveAuthManager.js";
@@ -588,14 +589,20 @@ export class GoogleDriveStorageDriver extends BaseDriver {
     const body = fileOrStream;
     const end = contentLength - 1;
 
-    const res = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Length": String(contentLength),
-        "Content-Range": `bytes 0-${end}/${contentLength}`,
-      },
-      body,
-    });
+    const res = await fetch(
+      uploadUrl,
+      buildUploadFetchInit(
+        {
+          method: "PUT",
+          headers: {
+            "Content-Length": String(contentLength),
+            "Content-Range": `bytes 0-${end}/${contentLength}`,
+          },
+          body,
+        },
+        { contentLength },
+      ),
+    );
 
     if (!res.ok) {
       const text = await res.text();

@@ -108,7 +108,9 @@ export class DiscordMultipartOperations {
     let effectivePartSize = Number.isFinite(partSize) && partSize > 0 ? Math.floor(partSize) : driver.partSizeBytes;
     effectivePartSize = Math.max(MIN_PART_SIZE, Math.min(MAX_PART_SIZE, effectivePartSize));
 
-    const calculatedPartCount = partCount || Math.max(1, Math.ceil(fileSize / effectivePartSize));
+    // partCount 一律依 clamp 後的 partSize 重算，避免與前端傳入值不一致
+    const calculatedPartCount = Math.max(1, Math.ceil(fileSize / effectivePartSize));
+    void partCount;
 
     // upload_sessions.fs_path 必須是“完整 FS 檔案路徑”，供 /upload-chunk 反查 mount/driver
     const fsPath = this._buildFsPathFromSubPathAndFileName(subPath, fileName, mount);

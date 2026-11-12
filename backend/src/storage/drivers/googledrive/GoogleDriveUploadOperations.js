@@ -4,12 +4,49 @@
  */
 
 import { DriverError } from "../../../http/errors.js";
+import { buildUploadFetchInit } from "../../../utils/streamBody.js";
 import {
   createUploadSessionRecord,
   updateUploadSessionStatusByFingerprint,
   listActiveUploadSessions,
   findUploadSessionById,
 } from "../../../utils/uploadSessions.js";
+
+
+/**
+ * 規範化瀏覽器 Origin（只接受 http/https 的 scheme://host[:port]）
+ * @param {string|null|undefined} origin
+ * @returns {string|null}
+ */
+function normalizeBrowserOrigin(origin) {
+  if (!origin || typeof origin !== "string") return null;
+  const trimmed = origin.trim();
+  if (!trimmed || trimmed === "null") return null;
+  try {
+    const u = new URL(trimmed);
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 讀取 upload_sessions.provider_meta 裡記錄的上傳通道
+ * @param {any} sessionRow
+ * @returns {"direct"|"proxy"|null}
+ */
+function readSessionChannel(sessionRow) {
+  const raw = sessionRow?.provider_meta;
+  if (!raw) return null;
+  try {
+    const meta = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const ch = String(meta?.channel || "").toLowerCase();
+    return ch === "direct" || ch === "proxy" ? ch : null;
+  } catch {
+    return null;
+  }
+}
 
 export class GoogleDriveUploadOperations {
   /**
@@ -41,6 +78,7 @@ export class GoogleDriveUploadOperations {
       db,
       userIdOrInfo,
       userType,
+      requestOrigin = null,
     } = options;
 
     if (!fileName || typeof fileSize !== "number" || !Number.isFinite(fileSize) || fileSize <= 0) {
@@ -100,6 +138,17 @@ export class GoogleDriveUploadOperations {
     initUrl.searchParams.set("supportsAllDrives", "true");
     initUrl.searchParams.set("includeItemsFromAllDrives", "true");
 
+    // 上傳通道：預設 direct（瀏覽器直連 Google 的 resumable session URL，不經後端）
+    // 只有 storage config 明確設定 upload_channel="proxy" 時才走後端中轉
+    const uploadChannel = String(
+      this.driver?.config?.upload_channel || process.env.GD_UPLOAD_CHANNEL || "direct",
+    ).toLowerCase();
+    const browserOrigin = normalizeBrowserOrigin(requestOrigin);
+    // direct 模式必須知道瀏覽器 Origin：Google 只對「建立會話時帶的 Origin」回 CORS 標頭，
+    // 沒帶 Origin 建立的 session，瀏覽器 PUT 一律被 CORS 擋下（表現為 net::ERR_FAILED / status 0）。
+    // 拿不到 Origin（例如 API 腳本呼叫）時自動退回後端中轉。
+    const isDirectUpload = uploadChannel !== "proxy" && !!browserOrigin;
+
     const uploadUrl = await this.driver.authManager.withAccessToken(async (token) => {
       const headers = {
         Authorization: `Bearer ${token}`,
@@ -108,6 +157,9 @@ export class GoogleDriveUploadOperations {
       };
       if (Number.isFinite(fileSize) && fileSize > 0) {
         headers["X-Upload-Content-Length"] = String(fileSize);
+      }
+      if (isDirectUpload) {
+        headers.Origin = browserOrigin;
       }
 
       const res = await fetch(initUrl.toString(), {
@@ -178,7 +230,7 @@ export class GoogleDriveUploadOperations {
         nextExpectedRange: "0-",
         providerUploadId: null,
         providerUploadUrl: uploadUrl,
-        providerMeta: null,
+        providerMeta: JSON.stringify({ channel: isDirectUpload ? "direct" : "proxy", origin: browserOrigin || null }),
         status: "initiated",
         expiresAt: null,
       });
@@ -189,13 +241,6 @@ export class GoogleDriveUploadOperations {
         cause: error,
       });
     }
-
-    // 上傳通道：預設 direct（瀏覽器直連 Google 的 resumable session URL，不經後端）
-    // 只有 storage config 明確設定 upload_channel="proxy" 時才走後端中轉
-    const uploadChannel = String(
-      this.driver?.config?.upload_channel || process.env.GD_UPLOAD_CHANNEL || "direct",
-    ).toLowerCase();
-    const isDirectUpload = uploadChannel !== "proxy";
 
     // proxy 模式：把分片送給後端，由後端轉發到 Google Drive
     const proxyUploadUrl = `/api/fs/multipart/upload-chunk?upload_id=${encodeURIComponent(
@@ -680,6 +725,7 @@ export class GoogleDriveUploadOperations {
         ? Number(sessionRow.bytes_uploaded)
         : null;
 
+    let remoteDone = false;
     // 優先嚐試向 Google Drive 查詢遠端會話狀態，以雲端為準
     if (totalSize && sessionRow.provider_upload_url) {
       try {
@@ -696,6 +742,7 @@ export class GoogleDriveUploadOperations {
           bytesUploaded = statusInfo.bytesUploaded;
           nextExpectedRange = statusInfo.nextExpectedRange ?? null;
         }
+        remoteDone = statusInfo?.done === true;
 
         // 同步遠端狀態到本地 upload_sessions（非關鍵路徑）
         if (db && mount?.storage_config_id) {
@@ -766,10 +813,11 @@ export class GoogleDriveUploadOperations {
 
     const nextRanges = nextExpectedRange ? [String(nextExpectedRange)] : [];
 
-    // 續傳時保持與初始化一致的通道：預設直連（Google resumable URL），proxy 模式才走後端
-    const refreshChannel = String(
-      this.driver?.config?.upload_channel || process.env.GD_UPLOAD_CHANNEL || "direct",
-    ).toLowerCase();
+    // 續傳時保持與初始化一致的通道：以建立會話時記錄的通道為準
+    // （direct 會話建立時綁定了瀏覽器 Origin；proxy 會話沒有，瀏覽器不能直連）
+    const refreshChannel =
+      readSessionChannel(sessionRow) ||
+      String(this.driver?.config?.upload_channel || process.env.GD_UPLOAD_CHANNEL || "proxy").toLowerCase();
     const refreshDirectUrl = sessionRow?.provider_upload_url
       ? String(sessionRow.provider_upload_url)
       : null;
@@ -787,6 +835,8 @@ export class GoogleDriveUploadOperations {
         providerUploadUrl: refreshDirectUrl,
         channel: refreshChannel !== "proxy" && refreshDirectUrl ? "direct" : "proxy",
         nextExpectedRanges: nextRanges,
+        bytesUploaded: typeof bytesUploaded === "number" && Number.isFinite(bytesUploaded) ? bytesUploaded : null,
+        done: remoteDone === true,
       },
       policy: {
         refreshPolicy: "server_decides",
@@ -827,12 +877,18 @@ export class GoogleDriveUploadOperations {
         headers["Content-Length"] = String(contentLength);
       }
 
-      const response = await fetch(uploadUrl, {
-        method: "PUT",
-        headers,
-        body,
-        redirect: "follow",
-      });
+      const response = await fetch(
+        uploadUrl,
+        buildUploadFetchInit(
+          {
+            method: "PUT",
+            headers,
+            body,
+            redirect: "follow",
+          },
+          { contentLength: Number.isFinite(contentLength) && contentLength > 0 ? contentLength : null },
+        ),
+      );
       return response;
     });
 
@@ -901,6 +957,9 @@ export class GoogleDriveUploadOperations {
         if (Number.isFinite(last) && last >= 0) {
           bytesUploaded = last + 1;
         }
+      } else if (!rangeHeader) {
+        // 官方文件：308 且沒有 Range 標頭 = 伺服器尚未收到任何位元組
+        bytesUploaded = 0;
       }
 
       const nextExpectedRange =

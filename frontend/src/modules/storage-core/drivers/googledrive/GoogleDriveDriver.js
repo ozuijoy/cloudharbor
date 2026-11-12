@@ -192,14 +192,17 @@ export class GoogleDriveDriver {
       strategy === STORAGE_STRATEGIES.PRESIGNED_SINGLE ||
       strategy === STORAGE_STRATEGIES.PRESIGNED_MULTIPART
     ) {
-      const adapter = new StorageAdapter(path || "/", uppy);
-
       const isMultipart = strategy === STORAGE_STRATEGIES.PRESIGNED_MULTIPART;
+      // Google Drive uploadSession 以 Content-Range 定位，前端切片大小必須與後端 session.partSize 完全一致：
+      // 先預初始化拿到後端 partSize，再用它切片（原本未設定 getChunkSize，Uppy 依檔案大小自行決定，
+      // 大檔或自訂分片大小時 Content-Range 會錯位而整檔失敗）
+      const adapter = new StorageAdapter(path || "/", uppy, { enableMultipartPreinit: isMultipart });
       const awsS3Opts = {
         id: "GoogleDriveFsPresigned",
         // Google Drive single_session 模式要求嚴格順序，這裡限制為序列上傳
         limit: 1,
         shouldUseMultipart: () => isMultipart,
+        getChunkSize: (data) => adapter.getChunkSizeForAwsS3(data),
       };
 
       if (isMultipart) {

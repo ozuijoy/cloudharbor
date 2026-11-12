@@ -354,14 +354,17 @@ export class OneDriveDriver {
       strategy === STORAGE_STRATEGIES.PRESIGNED_SINGLE ||
       strategy === STORAGE_STRATEGIES.PRESIGNED_MULTIPART
     ) {
-      const adapter = new StorageAdapter(path || "/", uppy);
-
       const isMultipart = strategy === STORAGE_STRATEGIES.PRESIGNED_MULTIPART;
+      // OneDrive uploadSession 以 Content-Range 定位，前端切片大小必須與後端 session.partSize 完全一致：
+      // 先預初始化拿到後端 partSize，再用它切片（原本未設定 getChunkSize，Uppy 依檔案大小自行決定，
+      // 大檔或自訂分片大小時 Content-Range 會錯位而整檔失敗）
+      const adapter = new StorageAdapter(path || "/", uppy, { enableMultipartPreinit: isMultipart });
       const awsS3Opts = {
         id: "OneDriveFsPresigned",
         // 對於 OneDrive 上傳會話，強制序列上傳，避免 Range 不一致問題
         limit: 1,
         shouldUseMultipart: () => isMultipart,
+        getChunkSize: (data) => adapter.getChunkSizeForAwsS3(data),
       };
 
       if (isMultipart) {

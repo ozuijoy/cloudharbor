@@ -356,6 +356,13 @@ export class StorageAdapter {
    * 銷燬介面卡，清理資源
    */
   destroy() {
+    // 移除本 adapter 安裝的預初始化前處理器，避免切換上傳方式後舊的前處理器仍殘留在 Uppy 上
+    if (this._multipartPreinitInstalled && this.uppyInstance) {
+      try {
+        this.uppyInstance.removePreProcessor(this._multipartPreinit);
+      } catch {}
+      this._multipartPreinitInstalled = false;
+    }
     this.sessionManager.destroy();
   }
 
