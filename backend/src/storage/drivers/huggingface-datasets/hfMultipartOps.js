@@ -125,7 +125,9 @@ export async function fetchHfLfsUploadInstructions(driver, { oid, size } = {}) {
   /** @type {any} */
   const payload = {
     operation: "upload",
-    transfers: ["basic", "multipart"],
+    // Git LFS 規範：transfers 依偏好排序，伺服器取第一個它支援的。
+    // multipart 放前面，讓 HF 對大檔優先給分片指令（basic 時整檔一次 PUT，在會重置連線的網路上必失敗）。
+    transfers: ["multipart", "basic"],
     hash_algo: "sha_256",
     objects: [{ oid: o, size: s }],
   };

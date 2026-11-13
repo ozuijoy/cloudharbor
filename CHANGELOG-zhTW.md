@@ -447,3 +447,9 @@ net::ERR_CONNECTION_RESET（重試 3 次）→ 403 Forbidden
 - 新增後端測試 `hf-share-multipart.test.js`（3 項）。
 
 注意：如果所在網路對 `*.s3-accelerate.amazonaws.com` 連小分片也持續重置，仍會失敗，只能換網路／代理。
+
+## 十四、HF 分享上傳：優先要求 multipart，basic 時明確提示
+
+- 現象：accd80b 之後大檔仍出現整檔 `x-id=PutObject` PUT → `ERR_CONNECTION_RESET` / 403。原因是 HF LFS batch 對該檔回傳 basic（單一 URL），前端只能退化為一片整檔上傳。
+- 修正：LFS batch 的 `transfers` 改為 `["multipart", "basic"]`（Git LFS 規範依偏好排序），讓 HF 優先給分片指令；掛載上傳與分享上傳皆適用。
+- 前端分享上傳在 console 印出 HF 回傳模式與分片數；若 HF 仍只給 basic，顯示警告：此檔只能整檔上傳，網路會重置 s3-accelerate 連線時需換網路或代理。

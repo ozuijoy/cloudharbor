@@ -194,6 +194,22 @@ export class HuggingFaceDatasetsDriver extends LocalDriver {
         const data = presign.data || {};
         const skipUpload = data.skipUpload === true;
         const partSize = Number(data.partSize) > 0 ? Math.floor(Number(data.partSize)) : file.size;
+        const partCount = Array.isArray(data.presignedUrls) ? data.presignedUrls.length : 0;
+        try {
+          console.info(
+            `[HF 分享上傳] ${fileName}：HF 回傳模式=${data.mode || "?"}，分片數=${partCount}，每片=${partSize} bytes`,
+          );
+          if (!skipUpload && data.mode !== "multipart") {
+            console.warn(
+              `[HF 分享上傳] HF 對這個檔案只給 basic（整檔單次 PUT，${file.size} bytes），無法分片；若網路會重置 s3-accelerate 連線，這個檔案在此網路下無法上傳。`,
+            );
+            uppy.info(
+              "HuggingFace 對這個檔案只提供整檔單次上傳（無法分片），若網路不穩請改用穩定網路或代理。",
+              "warning",
+              8000,
+            );
+          }
+        } catch {}
         uppy.setFileMeta(file.id, {
           key: data.key,
           storage_config_id: data.storage_config_id || basePayload.storage_config_id,

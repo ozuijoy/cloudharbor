@@ -58,7 +58,7 @@ test("HF 回 multipart：回傳每片 URL、partSize、completionUrl", async () 
   };
   try {
     const r = await makeDriver().generateMultipartUploadUrls("share/a.mp4", { fileSize: size, sha256: OID });
-    assert.deepEqual(sentPayload.transfers, ["basic", "multipart"]);
+    assert.deepEqual(sentPayload.transfers, ["multipart", "basic"]);
     assert.equal(r.mode, "multipart");
     assert.equal(r.presignedUrls.length, 3);
     assert.equal(r.partSize, 20 * 1024 * 1024);
